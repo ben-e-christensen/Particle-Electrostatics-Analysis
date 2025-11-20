@@ -6,12 +6,12 @@ import sys, os
 from scipy.signal import medfilt, find_peaks
 
 # === CONFIG ===
-BASE_DIR = "F:/particle-data"
+BASE_DIR = "/media/ben/SANDISK/particle-data/"
 SAMPLE_RATE = 100   # Hz
 BASELINE_WINDOW_SEC = 4   # smoothing window duration in seconds
-HOUR_BIN_SIZE = 1.0   # hours
+HOUR_BIN_SIZE = 0.5   # hours
 
-# --- NEW CONFIG FROM PREVIOUS CHAT ---
+# --- CONFIG FROM PREVIOUS CHAT ---
 MIN_HEIGHT = 10       # Min angle to be considered a peak
 PROMINENCE = 3.5      # How much it must drop to count (The "Avalanche" threshold)
 NOISE_THRESHOLD = 0.005 # 5mV threshold for "Active Fraction"
@@ -28,9 +28,19 @@ if not os.path.isfile(input_csv):
     print(f"❌ Error: {input_csv} not found")
     sys.exit(1)
 
+# === OUTPUT PATHS ===
+# Create specific folders for organization
+csv_dir = os.path.join(run_dir, "csv_files")
+graphs_dir = os.path.join(run_dir, "graphs")
+
+os.makedirs(csv_dir, exist_ok=True)
+os.makedirs(graphs_dir, exist_ok=True)
+
+# Set plot directory to the new graphs folder
+plot_dir = graphs_dir
+
 run_name = os.path.basename(run_dir)
 material_name = run_name.replace("-", " ")
-plot_dir = run_dir
 
 # === LOAD DATA ===
 cols = [
@@ -61,8 +71,8 @@ peak_indices, properties = find_peaks(
 result_df = df.iloc[peak_indices].copy()
 result_df = result_df[result_df["ellipse_angle_deg"] <= 70] # Safety filter
 
-# Save Peaks
-peaks_csv = os.path.join(run_dir, "fall_local_maxima_hourly.csv")
+# Save Peaks to csv_files folder
+peaks_csv = os.path.join(csv_dir, "fall_local_maxima_hourly.csv")
 result_df.to_csv(peaks_csv, index=False)
 print(f"✅ Saved → {peaks_csv} ({len(result_df)} local maxima)")
 
@@ -78,7 +88,8 @@ if len(result_df) > 0:
         )
         .reset_index()
     )
-    summary_csv = os.path.join(run_dir, "hourly_summary.csv")
+    # Save Summary to csv_files folder
+    summary_csv = os.path.join(csv_dir, "hourly_summary.csv")
     summary.to_csv(summary_csv, index=False)
     print(f"✅ Saved → {summary_csv}")
 
@@ -128,7 +139,8 @@ for h_bin in sorted(hour_bins):
     })
 
 charge_df = pd.DataFrame(charge_stats)
-charge_csv = os.path.join(run_dir, "hourly_charge_stats.csv")
+# Save Charge Stats to csv_files folder
+charge_csv = os.path.join(csv_dir, "hourly_charge_stats.csv")
 charge_df.to_csv(charge_csv, index=False)
 print(f"✅ Saved → {charge_csv}")
 
