@@ -6,7 +6,7 @@ import sys, os
 from scipy.signal import medfilt, find_peaks
 
 # === CONFIG ===
-BASE_DIR = "/media/ben/SANDISK/particle-data/"
+BASE_DIR = "F:/"
 SAMPLE_RATE = 100   # Hz
 BASELINE_WINDOW_SEC = 4   # smoothing window duration in seconds
 HOUR_BIN_SIZE = 1   # hours (For the CSV summary tables)
