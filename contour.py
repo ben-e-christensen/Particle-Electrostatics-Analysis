@@ -7,9 +7,9 @@ from scipy.signal import medfilt, find_peaks
 from scipy.stats import binned_statistic_2d
 
 # === CONFIG ===
-BASE_DIR = "F:/particle-data"
+BASE_DIR = "/media/ben/SANDISK/particle-data/"
 SAMPLE_RATE = 100  # Hz
-BASELINE_WINDOW_SEC = 4  # smoothing window duration
+BASELINE_WINDOW_SEC = 4 # smoothing window duration
 
 # !!! CHANGE THIS VALUE TO ADJUST THE GRAPH !!!
 TOP_PERCENT_CHARGE = 20  # e.g., 20 for Top 20% of values
@@ -198,8 +198,8 @@ def plot_combined_contour(data, z_col, title_main, cbar_label, filename):
     plt.figure(figsize=(10, 8))
     
     x = data["motor_speed"]
-    y = data["angle_mean"]
-    z = data[z_col]
+    y = data[z_col]
+    z = data["angle_mean"]
     
     cntr = plt.tricontourf(x, y, z, levels=30, cmap="inferno")
     plt.plot(x, y, 'ko', ms=3, alpha=0.3, label="Data Points")
@@ -208,23 +208,23 @@ def plot_combined_contour(data, z_col, title_main, cbar_label, filename):
     cbar.set_label(cbar_label, fontsize=12)
     
     plt.xlabel("Motor Speed (RPM)")
-    plt.ylabel("Angle of Repose (°)")
+    plt.ylabel("Voltage Std Dev (V)")
     plt.title(f"{material_name}\n{title_main} (Contour)")
     plt.grid(True, alpha=0.3, linestyle="--")
     plt.legend(loc="upper left")
     plt.savefig(os.path.join(plot_dir, filename))
     plt.close()
 
-plot_combined_contour(master_minute_df, "combined_std", "Electrostatic Phase Diagram (Noise)", "Voltage Std Dev (V)", "Graph_2_Contour_Noise.png")
-plot_combined_contour(master_minute_df, "combined_top_pct", f"Electrostatic Phase Diagram (Top {TOP_PERCENT_CHARGE}%)", "Voltage (V)", "Graph_3_Contour_Magnitude.png")
+plot_combined_contour(master_minute_df, "combined_std", "Electrostatic Phase Diagram (Noise)", "Angle of Repose (°)", "Graph_2_Contour_Noise.png")
+plot_combined_contour(master_minute_df, "combined_top_pct", f"Electrostatic Phase Diagram (Top {TOP_PERCENT_CHARGE}%)", "Angle of Repose (°)", "Graph_3_Contour_Magnitude.png")
 
 # --- 4. PLOT: BINNED HEATMAPS (Histogram) ---
 def plot_binned_heatmap(data, z_col, title_main, cbar_label, filename):
     if len(data) < 5: return
     
     x = data["motor_speed"]
-    y = data["angle_mean"]
-    z = data[z_col]
+    y = data[z_col]
+    z = data["angle_mean"]
     
     # Define grid size
     x_bins = np.linspace(x.min(), x.max(), 12)  # ~2 RPM per bin
@@ -244,12 +244,12 @@ def plot_binned_heatmap(data, z_col, title_main, cbar_label, filename):
     cbar.set_label(f"Mean {cbar_label}", fontsize=12)
     
     plt.xlabel("Motor Speed (RPM)")
-    plt.ylabel("Angle of Repose (°)")
+    plt.ylabel("Voltage Std Dev (V)")
     plt.title(f"{material_name}\n{title_main} (Binned Heatmap)")
     plt.savefig(os.path.join(plot_dir, filename))
     plt.close()
 
-plot_binned_heatmap(master_minute_df, "combined_std", "Electrostatic Distribution (Noise)", "Voltage Std Dev (V)", "Graph_4_Heatmap_Noise.png")
-plot_binned_heatmap(master_minute_df, "combined_top_pct", f"Electrostatic Distribution (Top {TOP_PERCENT_CHARGE}%)", "Voltage (V)", "Graph_5_Heatmap_Magnitude.png")
+plot_binned_heatmap(master_minute_df, "combined_std", "Electrostatic Distribution (Noise)", "Angle of Repose (°)", "Graph_4_Heatmap_Noise.png")
+plot_binned_heatmap(master_minute_df, "combined_top_pct", f"Electrostatic Distribution (Top {TOP_PERCENT_CHARGE}%)", "Angle of Repose (°)", "Graph_5_Heatmap_Magnitude.png")
 
 print(f"🚀 Done! Saved stats CSV + 5 graphs to: {output_dir}")
