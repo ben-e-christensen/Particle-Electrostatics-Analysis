@@ -2,254 +2,92 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-import sys, os
-from scipy.signal import medfilt, find_peaks
-from scipy.stats import binned_statistic_2d
+import os
 
 # === CONFIG ===
-BASE_DIR = "/media/ben/SANDISK/particle-data/"
-SAMPLE_RATE = 100  # Hz
-BASELINE_WINDOW_SEC = 4 # smoothing window duration
+DATA_PATH = "F:/particle-data/750/Dirty/60mins/analysis_comparative_metrics/master_comparison_data.csv"
+BASE_OUTPUT_DIR = "F:/particle-data/750/Dirty/60mins/physics_angle_contours/"
 
-# !!! CHANGE THIS VALUE TO ADJUST THE GRAPH !!!
-TOP_PERCENT_CHARGE = 20  # e.g., 20 for Top 20% of values
+# PROPERTY DATABASE
+PHYSICS_DB = {
+    "acetal":  {"density": 1.42, "tribo_rank": -1, "resistivity": 15},
+    "acrylic": {"density": 1.18, "tribo_rank": 0,  "resistivity": 14},
+    "nylon":   {"density": 1.14, "tribo_rank": 10, "resistivity": 12},
+    "teflon":  {"density": 2.20, "tribo_rank": -20,"resistivity": 18}
+}
 
-# --- Parse argument ---
-if len(sys.argv) < 2:
-    print("Usage: python3 main.py <Material/RunFolder>")
-    sys.exit(1)
+def run_physics_contours():
+    if not os.path.exists(DATA_PATH):
+        print(f"Error: Could not find {DATA_PATH}")
+        return
 
-rel_path = sys.argv[1]
-parent_dir = os.path.join(BASE_DIR, rel_path)
+    df = pd.read_csv(DATA_PATH)
+    df['material'] = df['material'].str.lower()
 
-if not os.path.isdir(parent_dir):
-    print(f"❌ Error: {parent_dir} is not a directory")
-    sys.exit(1)
+    if 'grouped_speed' not in df.columns:
+        df['grouped_speed'] = df['motor_speed'].round(0).astype(int) if 'motor_speed' in df.columns else 0
 
-# === OUTPUT PATHS ===
-output_dir = os.path.join(parent_dir, "aggregated_results")
-os.makedirs(output_dir, exist_ok=True)
-plot_dir = output_dir 
+    # Map physics properties
+    for prop in ["density", "tribo_rank", "resistivity"]:
+        df[prop] = df['material'].map(lambda x: PHYSICS_DB.get(x, {}).get(prop, np.nan))
 
-run_name = os.path.basename(os.path.normpath(parent_dir))
-material_name = run_name.replace("-", " ")
-
-print(f"📂 Analyzing Group: {run_name}")
-
-# Find all subfolders containing experiment_log.csv
-subfolders = [f.path for f in os.scandir(parent_dir) if f.is_dir()]
-
-# Storage
-all_summaries = []      # For Angle Sweep (Forward/Backward)
-all_minute_data = []    # For Contour/Heatmaps (Combined Channels)
-
-# === HELPER FUNCTIONS ===
-def avg_top_percent(series):
-    abs_series = series.abs()
-    if len(abs_series) == 0: return 0
-    q = 1.0 - (TOP_PERCENT_CHARGE / 100.0)
-    cutoff = abs_series.quantile(q)
-    return abs_series[abs_series >= cutoff].mean() if len(abs_series[abs_series >= cutoff]) > 0 else 0
-
-# =========================================================
-# 🔄 MASTER LOOP
-# =========================================================
-
-for trial_folder in subfolders:
-    input_csv = os.path.join(trial_folder, "experiment_log.csv")
-    if not os.path.isfile(input_csv): continue
-
-    trial_name = os.path.basename(trial_folder)
-    print(f"   running trial: {trial_name}...")
-
-    cols = ["index", "timestamp", "seq", "ms", "motor_angle_deg", "motor_speed", 
-            "CH0_volts", "CH2_volts", "CH3_volts", "ellipse_angle_deg", 
-            "ellipse_area_px2", "frame_name", "ch2_dv/dt", "ch3_dv/dt", "ch2_flag", "ch3_flag"]
+    unique_speeds = sorted(df['grouped_speed'].unique())
     
-    df = pd.read_csv(input_csv, names=cols, header=0, on_bad_lines="skip", engine="python")
-    
-    # --- 1. PRE-PROCESSING FOR ANGLE SWEEP ---
-    peak_indices, _ = find_peaks(df["ellipse_angle_deg"], height=20, prominence=3.5)
-    result_df = df.iloc[peak_indices].copy()
-    result_df = result_df[result_df["ellipse_angle_deg"] <= 70]
+    properties = [
+        ("density", "Density (g per cm3)"),
+        ("tribo_rank", "Triboelectric Rank"),
+        ("resistivity", "Log Resistivity (Ohm per sq)")
+    ]
 
-    if len(result_df) > 0:
-        # Identify Speed Changes
-        result_df["speed_change"] = result_df["motor_speed"].ne(result_df["motor_speed"].shift())
-        result_df["run_id"] = result_df["speed_change"].cumsum()
-
-        # Legacy 26 RPM split fix (if needed for your specific dataset)
-        mask26 = (result_df["motor_speed"] == 26)
-        count26 = mask26.sum()
-        if count26 > 0:
-            idxs_26 = result_df.index[mask26].to_list()
-            half = count26 // 2
-            run_forward = idxs_26[:half]
-            run_backward = idxs_26[half:]
-            if len(run_forward) > 0 and len(run_backward) > 0:
-                fwd_id = result_df.loc[run_forward[0], "run_id"]
-                result_df.loc[run_backward, "run_id"] = fwd_id + 1
-                result_df.loc[result_df.index > run_backward[-1], "run_id"] += 1
-
-        # Aggregate by Speed Step
-        trial_summary = (
-            result_df.groupby("run_id")
-            .agg(
-                motor_speed=("motor_speed", "first"),
-                angle_mean=("ellipse_angle_deg", "mean"),
-                angle_std=("ellipse_angle_deg", "std")
-            )
-            .reset_index(drop=True)
-        )
+    for prop_col, prop_label in properties:
+        # Folder per property
+        prop_dir = os.path.join(BASE_OUTPUT_DIR, prop_col.capitalize())
+        os.makedirs(prop_dir, exist_ok=True)
         
-        # Determine Direction (Forward/Backward)
-        trial_summary["direction"] = "Backward"
-        half_pt = len(trial_summary) // 2
-        trial_summary.iloc[:half_pt, trial_summary.columns.get_loc("direction")] = "Forward"
-        
-        all_summaries.append(trial_summary)
+        print(f"Generating Angle Heatmaps for: {prop_label}")
 
-    # --- 2. PRE-PROCESSING FOR CONTOURS (Minute Bins) ---
-    kernel_size = int(BASELINE_WINDOW_SEC * SAMPLE_RATE) | 1
-    
-    df["CH2_baseline"] = medfilt(df["CH2_volts"], kernel_size)
-    df["CH2_clean"] = df["CH2_volts"] - df["CH2_baseline"]
-    
-    df["CH3_baseline"] = medfilt(df["CH3_volts"], kernel_size)
-    df["CH3_clean"] = df["CH3_volts"] - df["CH3_baseline"]
+        for speed in unique_speeds:
+            speed_df = df[df['grouped_speed'] == speed].dropna()
+            
+            if speed_df['material'].nunique() < 3:
+                continue
 
-    t0 = df["timestamp"].iloc[0]
-    df["minute_bin"] = ((df["timestamp"] - t0) / 60).astype(int)
-    
-    # Angle data for minutes
-    angle_minutes = result_df.copy()
-    angle_minutes["minute_bin"] = ((angle_minutes["timestamp"] - t0) / 60).astype(int)
+            plt.figure(figsize=(10, 7))
+            
+            # X = Physical Property
+            # Y = Voltage Std Dev (Charge)
+            # Z = Angle of Repose (The Heat)
+            x = speed_df[prop_col]
+            y = speed_df['voltage_std']
+            z = speed_df['angle_mean']
 
-    # Melt (Combine) Channels
-    melted_df = df.melt(
-        id_vars=["minute_bin", "motor_speed"], 
-        value_vars=["CH2_clean", "CH3_clean"], 
-        value_name="combined_clean"
-    )
+            try:
+                # Using 'viridis' or 'plasma' to represent the steepness of the angle
+                cntr = plt.tricontourf(x, y, z, levels=20, cmap="viridis", alpha=0.9)
+                cbar = plt.colorbar(cntr)
+                cbar.set_label("Angle of Repose (Degrees)", fontsize=12)
+                
+                # Topographical lines
+                plt.tricontour(x, y, z, levels=20, colors='black', linewidths=0.3, alpha=0.2)
+                
+                # Data points (Clean, no labels)
+                plt.scatter(x, y, c=z, cmap="viridis", edgecolors='white', s=110, linewidths=1.2, zorder=5)
 
-    charge_per_minute = melted_df.groupby("minute_bin").agg(
-        combined_std=("combined_clean", "std"),
-        combined_top_pct=("combined_clean", avg_top_percent),
-        motor_speed=("motor_speed", "mean")
-    )
-    
-    angle_per_minute = angle_minutes.groupby("minute_bin").agg(
-        angle_mean=("ellipse_angle_deg", "mean")
-    )
-    
-    minute_data = pd.merge(charge_per_minute, angle_per_minute, on="minute_bin", how="inner")
-    minute_data["trial"] = trial_name
-    all_minute_data.append(minute_data)
+            except Exception as e:
+                print(f"  Failed RPM {speed} for {prop_col}: {e}")
+                plt.close()
+                continue
 
-# =========================================================
-# 📊 PLOTTING SECTION
-# =========================================================
+            plt.title(f"{prop_label} vs Charge | Color: Angle | {speed} RPM", fontsize=14, pad=15)
+            plt.xlabel(prop_label, fontsize=12)
+            plt.ylabel("Voltage Std Dev (Charge Intensity)", fontsize=12)
+            plt.grid(True, linestyle=':', alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(prop_dir, f"RPM_{speed}.png"))
+            plt.close()
 
-if not all_summaries:
-    print("❌ No valid data found.")
-    sys.exit(0)
+    print(f"\nAll angle-heat contours generated in: {BASE_OUTPUT_DIR}")
 
-print("🎨 Generating Plots...")
-
-# Combine Data
-master_angle_df = pd.concat(all_summaries, ignore_index=True)
-master_minute_df = pd.concat(all_minute_data, ignore_index=True)
-
-# --- 1. EXPORT SUMMARY STATS (For Comparison Script) ---
-# Calculate Angle Stats
-global_stats = master_angle_df.groupby(["motor_speed", "direction"])["angle_mean"].agg(["mean", "std"]).reset_index()
-
-# Calculate Charge Stats (Aggregated by Speed)
-charge_agg = master_minute_df.groupby("motor_speed").agg(
-    charge_std=("combined_std", "mean"),
-    charge_mag=("combined_top_pct", "mean")
-).reset_index()
-
-# Merge and Save
-export_df = pd.merge(global_stats, charge_agg, on="motor_speed", how="left")
-export_path = os.path.join(output_dir, "summary_stats.csv")
-export_df.to_csv(export_path, index=False)
-print(f"💾 Saved summary stats to: {export_path}")
-
-# --- 2. PLOT: ANGLE SWEEP (Hysteresis) ---
-fwd = global_stats[global_stats["direction"] == "Forward"].sort_values("motor_speed")
-bwd = global_stats[global_stats["direction"] == "Backward"].sort_values("motor_speed", ascending=False)
-
-plt.figure(figsize=(10, 6))
-plt.errorbar(fwd["motor_speed"], fwd["mean"], yerr=fwd["std"], fmt="-o", capsize=5, label="Forward Sweep (0->Max)")
-plt.errorbar(bwd["motor_speed"], bwd["mean"], yerr=bwd["std"], fmt="--s", capsize=5, label="Backward Sweep (Max->0)")
-
-plt.xlabel("Motor Speed (RPM)")
-plt.ylabel("Angle of Repose (°)")
-plt.title(f"{material_name} — Hysteresis Sweep")
-plt.legend()
-plt.grid(True, alpha=0.5)
-plt.savefig(os.path.join(plot_dir, "Graph_1_Angle_Sweep.png"))
-plt.close()
-
-# --- 3. PLOT: CONTOUR MAPS (Smooth) ---
-def plot_combined_contour(data, z_col, title_main, cbar_label, filename):
-    if len(data) < 5: return
-    plt.figure(figsize=(10, 8))
-    
-    x = data["motor_speed"]
-    y = data[z_col]
-    z = data["angle_mean"]
-    
-    cntr = plt.tricontourf(x, y, z, levels=30, cmap="inferno")
-    plt.plot(x, y, 'ko', ms=3, alpha=0.3, label="Data Points")
-    
-    cbar = plt.colorbar(cntr)
-    cbar.set_label(cbar_label, fontsize=12)
-    
-    plt.xlabel("Motor Speed (RPM)")
-    plt.ylabel("Voltage Std Dev (V)")
-    plt.title(f"{material_name}\n{title_main} (Contour)")
-    plt.grid(True, alpha=0.3, linestyle="--")
-    plt.legend(loc="upper left")
-    plt.savefig(os.path.join(plot_dir, filename))
-    plt.close()
-
-plot_combined_contour(master_minute_df, "combined_std", "Electrostatic Phase Diagram (Noise)", "Angle of Repose (°)", "Graph_2_Contour_Noise.png")
-plot_combined_contour(master_minute_df, "combined_top_pct", f"Electrostatic Phase Diagram (Top {TOP_PERCENT_CHARGE}%)", "Angle of Repose (°)", "Graph_3_Contour_Magnitude.png")
-
-# --- 4. PLOT: BINNED HEATMAPS (Histogram) ---
-def plot_binned_heatmap(data, z_col, title_main, cbar_label, filename):
-    if len(data) < 5: return
-    
-    x = data["motor_speed"]
-    y = data[z_col]
-    z = data["angle_mean"]
-    
-    # Define grid size
-    x_bins = np.linspace(x.min(), x.max(), 12)  # ~2 RPM per bin
-    y_bins = np.linspace(y.min(), y.max(), 12)  # ~2 Degrees per bin
-    
-    # Calculate statistics in bins
-    ret = binned_statistic_2d(x, y, z, statistic='mean', bins=[x_bins, y_bins])
-    
-    plt.figure(figsize=(10, 8))
-    
-    # Plot heatmap
-    # Rotated and flipped to match standard XY plot orientation
-    plt.imshow(ret.statistic.T, origin='lower', extent=[x.min(), x.max(), y.min(), y.max()], 
-               aspect='auto', cmap="inferno")
-    
-    cbar = plt.colorbar()
-    cbar.set_label(f"Mean {cbar_label}", fontsize=12)
-    
-    plt.xlabel("Motor Speed (RPM)")
-    plt.ylabel("Voltage Std Dev (V)")
-    plt.title(f"{material_name}\n{title_main} (Binned Heatmap)")
-    plt.savefig(os.path.join(plot_dir, filename))
-    plt.close()
-
-plot_binned_heatmap(master_minute_df, "combined_std", "Electrostatic Distribution (Noise)", "Angle of Repose (°)", "Graph_4_Heatmap_Noise.png")
-plot_binned_heatmap(master_minute_df, "combined_top_pct", f"Electrostatic Distribution (Top {TOP_PERCENT_CHARGE}%)", "Angle of Repose (°)", "Graph_5_Heatmap_Magnitude.png")
-
-print(f"🚀 Done! Saved stats CSV + 5 graphs to: {output_dir}")
+if __name__ == '__main__':
+    run_physics_contours()

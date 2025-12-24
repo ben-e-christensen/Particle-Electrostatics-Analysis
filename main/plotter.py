@@ -6,7 +6,7 @@ import sys, os
 from scipy.signal import find_peaks
 
 # === CONFIG ===
-BASE_DIR = "/media/ben/SANDISK/particle-data"
+BASE_DIR = "F:/particle-data"
 SAMPLE_RATE = 100 
 AXIS_BUFFER_PCT = 0.20 
 SPEED_ROUNDING_PRECISION = 0 

@@ -7,7 +7,7 @@ from scipy.signal import medfilt, find_peaks
 
 # === CONFIG ===
 # !!! WARNING: UPDATE THIS PATH TO MATCH YOUR SYSTEM !!!
-BASE_DIR = "D:/particle-data/"
+BASE_DIR = "F:/particle-data/"
 # ======================================================
 SAMPLE_RATE = 100 # Hz
 BASELINE_WINDOW_SEC = 4 # smoothing window duration
