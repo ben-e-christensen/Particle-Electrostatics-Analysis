@@ -14,7 +14,23 @@ COLS_PER_PAGE = 3
 # =================================================
 
 def process_ensemble_heatmaps(parent_dir):
-    print(f"--- Starting Heatmap Analysis for: {parent_dir} ---")
+    # --- 0. PATH PARSING ---
+    # Convert backslashes to forward slashes for consistency
+    normalized_path = parent_dir.replace('\\', '/').rstrip('/')
+    path_parts = normalized_path.split('/')
+    
+    # Extract based on user structure: .../Volume/Condition/Duration/Material
+    # "Acrylic" is at index -1 (last)
+    # "1000" is at index -4 (4th from last)
+    try:
+        material_name = path_parts[-1]
+        volume_name = path_parts[-4]
+    except IndexError:
+        # Fallback if path is shorter than expected
+        material_name = "Unknown Material"
+        volume_name = "Unknown Volume"
+
+    print(f"--- Starting Heatmap Analysis for: {material_name} ({volume_name}) ---")
     
     # 1. DISCOVER TRIALS
     trial_folders = []
@@ -117,7 +133,9 @@ def process_ensemble_heatmaps(parent_dir):
         fig, axes = plt.subplots(nrows=2, ncols=len(current_speeds), 
                                  figsize=(len(current_speeds)*5, 8), 
                                  constrained_layout=True, squeeze=False)
-        fig.suptitle(f"Ensemble Heatmap Report: Part {page_idx + 1}", fontsize=22)
+        
+        # --- NEW TITLE FORMAT ---
+        fig.suptitle(f"{material_name} {volume_name} Heatmap Part {page_idx + 1}", fontsize=22)
         
         shared_im = None
         for col_i, speed in enumerate(current_speeds):
@@ -141,7 +159,6 @@ def process_ensemble_heatmaps(parent_dir):
                     spine.set_visible(False)
 
         # --- ADD ROW LABELS (Increasing/Decreasing) ---
-        # We attach these to the first column's axes so layout handles them
         axes[0, 0].set_ylabel("INCREASING \u2191", fontsize=20, fontweight='bold', labelpad=15)
         axes[1, 0].set_ylabel("DECREASING \u2193", fontsize=20, fontweight='bold', labelpad=15)
         

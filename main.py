@@ -95,10 +95,11 @@ def generate_whole_run_summaries(df, materials, output_dir):
         plt.savefig(os.path.join(plot_subdir, f"Summary_{material}.png"))
         plt.close()
 
-def generate_hysteresis_grid(df, materials, output_dir, y_col, y_label, filename):
+def generate_hysteresis_grid(df, materials, output_dir, y_col, y_label, filename_prefix):
     plot_subdir = os.path.join(output_dir, "Plots_Hysteresis")
     os.makedirs(plot_subdir, exist_ok=True)
     
+    # --- 1. Generate Combined 2x2 Grid (Original Logic) ---
     fig, axs = plt.subplots(2, 2, figsize=(14, 10), constrained_layout=True)
     fig.suptitle(f"{y_label} Hysteresis Analysis", fontsize=16)
     axs_flat = axs.flatten()
@@ -109,10 +110,9 @@ def generate_hysteresis_grid(df, materials, output_dir, y_col, y_label, filename
         mat_df = df[df["material"] == material.lower()]
         if mat_df.empty: continue
 
-        # Hysteresis aggregates by speed and direction (average of all minutes in that phase)
         h_stats = mat_df.groupby(['grouped_speed', 'direction']).agg(y_avg=(y_col, 'mean'), y_std=(y_col, 'std')).unstack()
         
-        for direction, color in [('Increasing', '#1f77b4'), ('Decreasing', '#d62728')]:
+        for direction, color in [('Increasing', 'grey'), ('Decreasing', 'black')]:
             if direction in h_stats['y_avg'].columns:
                 data = h_stats.xs(direction, axis=1, level=1).dropna()
                 ax.errorbar(data.index, data['y_avg'], yerr=data['y_std'], fmt='o-', 
@@ -124,8 +124,37 @@ def generate_hysteresis_grid(df, materials, output_dir, y_col, y_label, filename
         ax.grid(True, alpha=0.3)
         ax.legend()
 
-    plt.savefig(os.path.join(plot_subdir, f"{filename}.png"))
+    plt.savefig(os.path.join(plot_subdir, f"{filename_prefix}_Combined.png"))
     plt.close()
+
+    # --- 2. Generate Individual Plots (New Logic) ---
+    indiv_subdir = os.path.join(plot_subdir, "Individual_Materials")
+    os.makedirs(indiv_subdir, exist_ok=True)
+
+    for material in materials:
+        mat_df = df[df["material"] == material.lower()]
+        if mat_df.empty: continue
+
+        plt.figure(figsize=(8, 6))
+        
+        h_stats = mat_df.groupby(['grouped_speed', 'direction']).agg(y_avg=(y_col, 'mean'), y_std=(y_col, 'std')).unstack()
+        
+        for direction, color in [('Increasing', 'grey'), ('Decreasing', 'black')]:
+            if direction in h_stats['y_avg'].columns:
+                data = h_stats.xs(direction, axis=1, level=1).dropna()
+                plt.errorbar(data.index, data['y_avg'], yerr=data['y_std'], fmt='o-', 
+                            color=color, label=direction, capsize=5, lw=2, markersize=8)
+        
+        plt.title(f"{material.capitalize()} - {y_label}", fontweight='bold', fontsize=14)
+        plt.xlabel("Motor Speed (RPM)", fontsize=12)
+        plt.ylabel(y_label, fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.legend(fontsize=10)
+        plt.tight_layout()
+        
+        safe_mat_name = material.capitalize().replace(" ", "_")
+        plt.savefig(os.path.join(indiv_subdir, f"{filename_prefix}_{safe_mat_name}.png"))
+        plt.close()
 
 # ======================================================
 # CORE PROCESSING
@@ -195,8 +224,8 @@ def process_run(rel_path, metadata):
     # GENERATE PLOTS
     generate_temporal_grids(master_df, speeds, mats, metadata, output_dir)
     generate_whole_run_summaries(master_df, mats, output_dir)
-    generate_hysteresis_grid(master_df, mats, output_dir, "angle_mean", "Angle of Repose (deg)", "Hysteresis_Angle_2x2")
-    generate_hysteresis_grid(master_df, mats, output_dir, "voltage_std", "Std Dev Voltage (V)", "Hysteresis_Charge_2x2")
+    generate_hysteresis_grid(master_df, mats, output_dir, "angle_mean", "Angle of Repose (deg)", "Hysteresis_Angle")
+    generate_hysteresis_grid(master_df, mats, output_dir, "voltage_std", "Std Dev Voltage (V)", "Hysteresis_Charge")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2: sys.exit(1)
