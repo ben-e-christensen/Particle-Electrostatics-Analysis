@@ -67,32 +67,87 @@ def get_processed_df(root_path):
     return master[master["grouped_speed"] >= 1]
 
 # ======================================================
+# HELPER FOR AXIS LIMITS
+# ======================================================
+
+def get_padded_limits(series1, series2, padding=0.05):
+    """Calculates min/max across two series with padding."""
+    # Combine series and drop NaNs
+    combined = pd.concat([series1, series2]).dropna()
+    
+    if combined.empty:
+        return None, None
+        
+    val_min = combined.min()
+    val_max = combined.max()
+    
+    if val_min == val_max:
+        # Handle case where all values are the same (avoid singular matrix or zero range)
+        margin = abs(val_min) * 0.1 if val_min != 0 else 1.0
+        return val_min - margin, val_max + margin
+        
+    span = val_max - val_min
+    return val_min - (span * padding), val_max + (span * padding)
+
+# ======================================================
 # DYNAMIC COMPARISON PLOTTING
 # ======================================================
 
 def generate_comparison_hysteresis(df_dirty, df_clean, materials, output_dir, y_col, y_label, filename):
-    """Generates a dynamic Nx2 grid for side-by-side Hysteresis comparison."""
+    """Generates a dynamic Nx2 grid for side-by-side Hysteresis comparison with fixed axes per material."""
     plot_subdir = os.path.join(output_dir, "Comparison_Hysteresis")
     os.makedirs(plot_subdir, exist_ok=True)
     
     num_mats = len(materials)
-    # Dynamics: rows = number of materials, cols = 2 (Dirty vs Clean)
     fig, axs = plt.subplots(num_mats, 2, figsize=(16, 5 * num_mats), squeeze=False, constrained_layout=True)
     fig.suptitle(f"{y_label} Comparison: Dirty vs Clean", fontsize=20, fontweight='bold', y=1.02)
     
     for i, mat in enumerate(materials):
-        for col, (df_type, label) in enumerate([(df_dirty, "Dirty"), (df_clean, "Clean")]):
-            ax = axs[i, col]
-            mat_df = df_type[df_type["material"] == mat]
+        # 1. Isolate data for this material
+        mat_dirty = df_dirty[df_dirty["material"] == mat]
+        mat_clean = df_clean[df_clean["material"] == mat]
+
+        # 2. Calculate shared limits for this row (Material)
+        # Hysteresis X is Motor Speed (grouped_speed), Y is the variable passed (y_col)
+        
+        # We aggregate first to get the actual plotted points (mean + std) to ensure limits cover error bars
+        # However, for simplicity and robustness, we calculate limits on the raw data points used for the plot
+        # Or better: calculate on the aggregated means + std dev to ensure error bars fit.
+        
+        # Quick aggregation to find ranges including error bars
+        d_stats = mat_dirty.groupby(['grouped_speed', 'direction'])[y_col].agg(['mean', 'std']).reset_index() if not mat_dirty.empty else pd.DataFrame()
+        c_stats = mat_clean.groupby(['grouped_speed', 'direction'])[y_col].agg(['mean', 'std']).reset_index() if not mat_clean.empty else pd.DataFrame()
+        
+        # Calculate Y limits (Mean + Std Dev to ensure full visibility)
+        y_vals = []
+        if not d_stats.empty: 
+            y_vals.extend((d_stats['mean'] + d_stats['std'].fillna(0)).tolist())
+            y_vals.extend((d_stats['mean'] - d_stats['std'].fillna(0)).tolist())
+        if not c_stats.empty:
+            y_vals.extend((c_stats['mean'] + c_stats['std'].fillna(0)).tolist())
+            y_vals.extend((c_stats['mean'] - c_stats['std'].fillna(0)).tolist())
             
-            if not mat_df.empty:
-                h_stats = mat_df.groupby(['grouped_speed', 'direction']).agg(y_avg=(y_col, 'mean'), y_std=(y_col, 'std')).unstack()
+        y_series = pd.Series(y_vals)
+        y_min, y_max = get_padded_limits(y_series, pd.Series([])) # Padding helper handles single series too
+
+        # Calculate X limits (Motor Speed)
+        x_min, x_max = get_padded_limits(mat_dirty["grouped_speed"], mat_clean["grouped_speed"])
+
+        for col, (df_type, label) in enumerate([(mat_dirty, "Dirty"), (mat_clean, "Clean")]):
+            ax = axs[i, col]
+            
+            if not df_type.empty:
+                h_stats = df_type.groupby(['grouped_speed', 'direction']).agg(y_avg=(y_col, 'mean'), y_std=(y_col, 'std')).unstack()
                 for direction, color in [('Increasing', '#1f77b4'), ('Decreasing', '#d62728')]:
                     if direction in h_stats['y_avg'].columns:
                         data = h_stats.xs(direction, axis=1, level=1).dropna()
                         ax.errorbar(data.index, data['y_avg'], yerr=data['y_std'], fmt='o-', 
                                     color=color, label=direction, capsize=5, lw=2, markersize=8)
             
+            # Apply the shared limits
+            if y_min is not None: ax.set_ylim(y_min, y_max)
+            if x_min is not None: ax.set_xlim(x_min, x_max)
+
             ax.set_title(f"{mat.capitalize()} ({label})", fontweight='bold', fontsize=14)
             ax.set_xlabel("Motor Speed (RPM)")
             ax.set_ylabel(y_label)
@@ -103,7 +158,7 @@ def generate_comparison_hysteresis(df_dirty, df_clean, materials, output_dir, y_
     plt.close()
 
 def generate_comparison_grids(df_dirty, df_clean, materials, speeds, output_dir):
-    """Generates a dynamic Nx2 grid for side-by-side Minute-by-Minute analysis."""
+    """Generates a dynamic Nx2 grid for side-by-side Minute-by-Minute analysis with fixed axes per material."""
     plot_subdir = os.path.join(output_dir, "Comparison_Grids_By_Speed")
     os.makedirs(plot_subdir, exist_ok=True)
 
@@ -113,27 +168,42 @@ def generate_comparison_grids(df_dirty, df_clean, materials, speeds, output_dir)
         fig.suptitle(f"Speed: {speed} RPM | Dirty vs Clean Comparison", fontsize=20, fontweight='bold', y=1.02)
         
         for i, mat in enumerate(materials):
-            # Find the max minute for the colorbar scale across both dirty and clean for this material
-            m1 = df_dirty[(df_dirty["material"] == mat) & (df_dirty["grouped_speed"] == speed)]["minute_bin"]
-            m2 = df_clean[(df_clean["material"] == mat) & (df_clean["grouped_speed"] == speed)]["minute_bin"]
-            t_max = max(m1.max() if not m1.empty else 1, m2.max() if not m2.empty else 1)
+            # 1. Filter data for this Material AND Speed
+            mat_speed_dirty = df_dirty[(df_dirty["material"] == mat) & (df_dirty["grouped_speed"] == speed)]
+            mat_speed_clean = df_clean[(df_clean["material"] == mat) & (df_clean["grouped_speed"] == speed)]
 
-            for col, (df_type, label) in enumerate([(df_dirty, "Dirty"), (df_clean, "Clean")]):
+            # 2. Find shared Colorbar scale (Minute Bins)
+            t_max = max(
+                mat_speed_dirty["minute_bin"].max() if not mat_speed_dirty.empty else 1, 
+                mat_speed_clean["minute_bin"].max() if not mat_speed_clean.empty else 1
+            )
+
+            # 3. Find shared X/Y limits for scatter plot
+            # X = Voltage Std, Y = Angle Mean
+            x_min, x_max = get_padded_limits(mat_speed_dirty["voltage_std"], mat_speed_clean["voltage_std"])
+            y_min, y_max = get_padded_limits(mat_speed_dirty["angle_mean"], mat_speed_clean["angle_mean"])
+
+            for col, (df_subset, label) in enumerate([(mat_speed_dirty, "Dirty"), (mat_speed_clean, "Clean")]):
                 ax = axs[i, col]
-                mat_speed_df = df_type[(df_type["material"] == mat) & (df_type["grouped_speed"] == speed)]
                 
-                if not mat_speed_df.empty:
-                    sc = ax.scatter(mat_speed_df["voltage_std"], mat_speed_df["angle_mean"], 
-                                    c=mat_speed_df["minute_bin"], cmap="coolwarm", vmin=1, vmax=t_max,
+                if not df_subset.empty:
+                    sc = ax.scatter(df_subset["voltage_std"], df_subset["angle_mean"], 
+                                    c=df_subset["minute_bin"], cmap="coolwarm", vmin=1, vmax=t_max,
                                     alpha=0.8, s=80, edgecolors='black')
                     
-                    if len(mat_speed_df) >= 2:
-                        m, b = np.polyfit(mat_speed_df["voltage_std"], mat_speed_df["angle_mean"], 1)
-                        ax.plot(mat_speed_df["voltage_std"], m*mat_speed_df["voltage_std"] + b, "--", color="black", alpha=0.4)
+                    if len(df_subset) >= 2:
+                        m, b = np.polyfit(df_subset["voltage_std"], df_subset["angle_mean"], 1)
+                        # Plot trendline across the full visible X range for aesthetics
+                        x_vals = np.array([x_min, x_max]) if x_min is not None else df_subset["voltage_std"]
+                        ax.plot(x_vals, m*x_vals + b, "--", color="black", alpha=0.4)
                     
-                    if col == 1: # Add colorbar to the second column
+                    if col == 1: 
                         plt.colorbar(sc, ax=ax, label="Minute Bin")
                 
+                # Apply the shared limits
+                if x_min is not None: ax.set_xlim(x_min, x_max)
+                if y_min is not None: ax.set_ylim(y_min, y_max)
+
                 ax.set_title(f"{mat.capitalize()} ({label})", fontweight='bold', fontsize=14)
                 ax.set_xlabel("Std Dev Voltage (V)")
                 ax.set_ylabel("Angle of Repose (deg)")
