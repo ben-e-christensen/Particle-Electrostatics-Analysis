@@ -9,29 +9,114 @@ import os
 import math
 
 # ================= CONFIGURATION =================
+CALIBRATE_MODE = False  # <--- SET TO TRUE FIRST to draw/find values
+# -------------------------------------------------
+# PASTE YOUR CALIBRATED VALUES HERE:
+ROI_CENTER = (753, 485)  # (X, Y)
+ROI_RADIUS = 505
+# -------------------------------------------------
+
 IMAGE_SUBFOLDER = "images" 
 OUTPUT_FOLDER_NAME = "Ensemble_Multi_Volume_Results"
 SPEED_ROUNDING = 0 
 BASELINE_SPEED = 1
 BASELINE_DIR = "Increasing"
-
-# Heatmap Grid Settings
 COLS_PER_PAGE = 3 
-
-# Preferred Order for the 2x2 Grid
-ORDER_KEYS = ["500", "750", "1000", "Clean"]
+ORDER_KEYS = ["500", "750", "1000"]
 # =================================================
 
-def save_heatmap_grids(heatmap_store, unique_speeds, material_name, subfolder_name, output_dir):
-    """Generates and saves the 2x3 heatmap grids (Part 1, Part 2, etc.)"""
-    total_pages = math.ceil(len(unique_speeds) / COLS_PER_PAGE)
+# Global vars for drawing
+drawing = False
+ix, iy = -1, -1
+temp_circle = None
+
+def draw_circle_callback(event, x, y, flags, param):
+    global ix, iy, drawing, temp_circle, ROI_CENTER, ROI_RADIUS
+    img_copy = param.copy()
+
+    if event == cv2.EVENT_LBUTTONDOWN:
+        drawing = True
+        ix, iy = x, y
+
+    elif event == cv2.EVENT_MOUSEMOVE:
+        if drawing:
+            radius = int(math.hypot(x - ix, y - iy))
+            cv2.circle(img_copy, (ix, iy), radius, (0, 255, 0), 2)
+            cv2.circle(img_copy, (ix, iy), 3, (0, 0, 255), -1)
+            cv2.imshow('Calibrate ROI (Press ENTER to finish)', img_copy)
+
+    elif event == cv2.EVENT_LBUTTONUP:
+        drawing = False
+        radius = int(math.hypot(x - ix, y - iy))
+        cv2.circle(img_copy, (ix, iy), radius, (0, 255, 0), 2)
+        cv2.imshow('Calibrate ROI (Press ENTER to finish)', img_copy)
+        ROI_CENTER = (ix, iy)
+        ROI_RADIUS = radius
+
+def run_calibration(parent_dir):
+    print("--- ROI CALIBRATION MODE ---")
+    print("Searching for a sample image...")
     
+    sample_img_path = None
+    for root, dirs, files in os.walk(parent_dir):
+        if IMAGE_SUBFOLDER in root or "frames" in root:
+            for f in files:
+                if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                    sample_img_path = os.path.join(root, f)
+                    break
+        if sample_img_path: break
+    
+    if not sample_img_path:
+        print("Error: No images found to calibrate with!")
+        sys.exit()
+
+    img = cv2.imread(sample_img_path)
+    if img is None:
+        print("Error: Could not open image.")
+        sys.exit()
+
+    print(f"Loaded: {os.path.basename(sample_img_path)}")
+    print("INSTRUCTIONS:")
+    print("1. Click the CENTER of the drum.")
+    print("2. Drag out to the edge.")
+    print("3. Release mouse.")
+    print("4. Press ENTER to confirm and exit.")
+
+    cv2.namedWindow('Calibrate ROI (Press ENTER to finish)')
+    cv2.setMouseCallback('Calibrate ROI (Press ENTER to finish)', draw_circle_callback, img)
+    cv2.imshow('Calibrate ROI (Press ENTER to finish)', img)
+    
+    while True:
+        k = cv2.waitKey(1) & 0xFF
+        if k == 13: # Enter key
+            break
+            
+    cv2.destroyAllWindows()
+    print("\n" + "="*40)
+    print("CALIBRATION COMPLETE. COPY THESE VALUES:")
+    print(f"ROI_CENTER = {ROI_CENTER}")
+    print(f"ROI_RADIUS = {ROI_RADIUS}")
+    print("="*40 + "\n")
+    sys.exit() # Stop script here
+
+def apply_circular_mask(img):
+    """Zeros out everything outside the hardcoded circle."""
+    h, w = img.shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    # Draw white circle on black mask
+    cv2.circle(mask, ROI_CENTER, ROI_RADIUS, 255, -1)
+    
+    # Apply mask
+    masked_img = cv2.bitwise_and(img, img, mask=mask)
+    return masked_img
+
+def save_heatmap_grids(heatmap_store, unique_speeds, material_name, subfolder_name, output_dir):
+    total_pages = math.ceil(len(unique_speeds) / COLS_PER_PAGE)
     for page_idx in range(total_pages):
         start_idx = page_idx * COLS_PER_PAGE
         end_idx = start_idx + COLS_PER_PAGE
         current_speeds = unique_speeds[start_idx:end_idx]
         
-        # Dynamic Title
         title_text = f"{material_name} {subfolder_name} Heatmap Part {page_idx + 1}"
         
         fig, axes = plt.subplots(nrows=2, ncols=len(current_speeds), 
@@ -43,7 +128,6 @@ def save_heatmap_grids(heatmap_store, unique_speeds, material_name, subfolder_na
         for col_i, speed in enumerate(current_speeds):
             for row_i, direction in enumerate(["Increasing", "Decreasing"]):
                 ax = axes[row_i, col_i]
-                
                 if direction in heatmap_store.get(speed, {}):
                     im = ax.imshow(heatmap_store[speed][direction], cmap='inferno', vmin=0, vmax=100)
                     if row_i == 0: 
@@ -51,7 +135,6 @@ def save_heatmap_grids(heatmap_store, unique_speeds, material_name, subfolder_na
                         shared_im = im
                 else: 
                     ax.text(0.5, 0.5, "No Data", ha='center', va='center', color='gray')
-                
                 ax.set_xticks([])
                 ax.set_yticks([])
                 for spine in ax.spines.values(): spine.set_visible(False)
@@ -63,7 +146,6 @@ def save_heatmap_grids(heatmap_store, unique_speeds, material_name, subfolder_na
             cbar = fig.colorbar(shared_im, ax=axes, shrink=0.8, location='right', aspect=30)
             cbar.set_label("Frequency (%)", fontsize=14)
 
-        # Sanitize filename
         safe_name = f"{material_name}_{subfolder_name}_Part{page_idx+1}.png".replace(" ", "_")
         plt.savefig(os.path.join(output_dir, safe_name), dpi=300)
         plt.close()
@@ -78,7 +160,6 @@ def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
             csv_path = os.path.join(root, "experiment_log.csv")
             target_root = root
             break
-    
     if not csv_path: return None, None
 
     # 2. LOAD DATA
@@ -86,7 +167,6 @@ def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
             "CH0_volts", "CH2_volts", "CH3_volts", "ellipse_angle_deg", 
             "ellipse_area_px2", "frame_name", "ch2_dv/dt", "ch3_dv/dt", 
             "ch2_flag", "ch3_flag"]
-    
     try:
         df = pd.read_csv(csv_path, names=cols, header=0, on_bad_lines="skip", engine="python")
         df = df.dropna(subset=["frame_name"])
@@ -99,15 +179,13 @@ def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
         df["direction"] = "Increasing"
         df.loc[mid_idx + 1:, "direction"] = "Decreasing"
         df["grouped_speed"] = df["motor_speed"].round(SPEED_ROUNDING).astype(int)
-        
     except Exception as e:
-        print(f"  Error reading CSV in {folder_path}: {e}")
+        print(f"  Error reading CSV: {e}")
         return None, None
 
-    # 3. GENERATE HEATMAPS
+    # 3. GENERATE HEATMAPS (WITH ROI)
     unique_speeds = sorted(df["grouped_speed"].unique())
     unique_speeds = [s for s in unique_speeds if s >= 1]
-    
     heatmap_store = {}
     
     for speed in unique_speeds:
@@ -125,13 +203,15 @@ def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
             
             accumulator = None
             count = 0
-            
             for fname in frames:
                 fpath = os.path.join(img_dir, str(fname).strip())
                 if not os.path.exists(fpath): continue
                 
                 img = cv2.imread(fpath, cv2.IMREAD_GRAYSCALE)
                 if img is None: continue
+                
+                # --- APPLY CIRCULAR ROI ---
+                img = apply_circular_mask(img)
                 
                 if accumulator is None: accumulator = np.zeros_like(img, dtype=np.float32)
                 _, mask = cv2.threshold(img, 50, 1, cv2.THRESH_BINARY)
@@ -141,41 +221,38 @@ def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
             if accumulator is not None and count > 0:
                 heatmap_store[speed][direction] = (accumulator / count) * 100.0
 
-    # --- SAVE HEATMAP GRIDS ---
     save_heatmap_grids(heatmap_store, unique_speeds, material_name, subfolder_key, output_dir)
 
     # 4. CALCULATE DISPLACEMENTS
     if BASELINE_SPEED not in heatmap_store or BASELINE_DIR not in heatmap_store[BASELINE_SPEED]:
-        print(f"  Baseline ({BASELINE_SPEED} RPM {BASELINE_DIR}) missing in {subfolder_key}")
+        print(f"  Baseline missing in {subfolder_key}")
         return None, None
 
     base_map = heatmap_store[BASELINE_SPEED][BASELINE_DIR]
     base_cy, base_cx = center_of_mass(base_map)
-    
     results = []
+    
     for speed in unique_speeds:
         for direction in ["Increasing", "Decreasing"]:
             if direction in heatmap_store.get(speed, {}):
                 curr_map = heatmap_store[speed][direction]
                 curr_cy, curr_cx = center_of_mass(curr_map)
-                
                 dx = curr_cx - base_cx
-                dy = base_cy - curr_cy # Inverted Y
-                
-                results.append({
-                    'speed': speed,
-                    'dir': direction,
-                    'x': dx,
-                    'y': dy
-                })
+                dy = base_cy - curr_cy
+                results.append({'speed': speed, 'dir': direction, 'x': dx, 'y': dy})
                 
     return results, unique_speeds
 
 def process_multi_volume(parent_dir):
+    # --- CHECK CALIBRATION MODE ---
+    if CALIBRATE_MODE:
+        run_calibration(parent_dir)
+        return
+
     normalized_path = parent_dir.replace('\\', '/').rstrip('/')
     material_name = os.path.basename(normalized_path)
     
-    print(f"--- Starting Multi-Volume Analysis for: {material_name} ---")
+    print(f"--- Starting 1x3 Volume Analysis (ROI Active) for: {material_name} ---")
     
     output_dir = os.path.join(parent_dir, OUTPUT_FOLDER_NAME)
     if not os.path.exists(output_dir): os.makedirs(output_dir)
@@ -183,18 +260,16 @@ def process_multi_volume(parent_dir):
     # 1. IDENTIFY SUBFOLDERS
     all_subs = [f.path for f in os.scandir(parent_dir) if f.is_dir()]
     target_folders = {}
-    
     for folder in all_subs:
         fname = os.path.basename(folder)
         for key in ORDER_KEYS:
             if key.lower() in fname.lower():
-                if key == "500" and "clean" in fname.lower(): continue 
+                if "clean" in fname.lower(): continue 
                 target_folders[key] = folder
 
     # 2. PROCESS DATA
     dataset = {} 
     all_speeds = set()
-
     for key in ORDER_KEYS:
         if key in target_folders:
             print(f"\nProcessing Group: {key}...")
@@ -203,23 +278,19 @@ def process_multi_volume(parent_dir):
                 dataset[key] = data
                 all_speeds.update(speeds)
         else:
-            print(f"Warning: Could not find folder matching '{key}'")
+            print(f"Warning: Folder for '{key}' not found.")
 
     if not dataset:
         print("No valid data found.")
         return
 
-    # 3. GLOBAL LIMITS CALCULATION
+    # 3. GLOBAL LIMITS
     print("\nCalculating Fixed Axis Limits...")
-    all_x = []
-    all_y = []
+    all_x, all_y = [0], [0]
     for key, points in dataset.items():
         for p in points:
             all_x.append(p['x'])
             all_y.append(p['y'])
-    
-    all_x.append(0)
-    all_y.append(0)
     
     x_min, x_max = min(all_x), max(all_x)
     y_min, y_max = min(all_y), max(all_y)
@@ -230,17 +301,17 @@ def process_multi_volume(parent_dir):
     FIXED_XLIM = (x_min - x_buff, x_max + x_buff)
     FIXED_YLIM = (y_min - y_buff, y_max + y_buff)
 
-    # 4. PLOTTING
+    # 4. PLOTTING (1x3 Grid)
     sorted_speeds = sorted(list(all_speeds))
     cmap = plt.get_cmap('tab10')
     if len(sorted_speeds) > 10: cmap = plt.get_cmap('jet')
     speed_color_map = {s: cmap(i/len(sorted_speeds)) for i, s in enumerate(sorted_speeds)}
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12), constrained_layout=True)
-    axes_flat = axes.flatten()
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), constrained_layout=True)
+    fig.suptitle("Center of Mass Shifting in Particle Blob", fontsize=22, fontweight='bold')
 
     for i, key in enumerate(ORDER_KEYS):
-        ax = axes_flat[i]
+        ax = axes[i]
         
         if key not in dataset:
             ax.text(0.5, 0.5, f"{key}\n(No Data)", ha='center', va='center')
@@ -255,40 +326,28 @@ def process_multi_volume(parent_dir):
         for p in points:
             c = speed_color_map.get(p['speed'], 'black')
             marker = 's' if p['dir'] == "Increasing" else '^'
-            ax.scatter(p['x'], p['y'], color=c, marker=marker, s=80, edgecolor='black', alpha=0.8)
+            ax.scatter(p['x'], p['y'], color=c, marker=marker, s=100, edgecolor='black', alpha=0.8)
             
             partner = next((item for item in points if item['speed'] == p['speed'] and item['dir'] != p['dir']), None)
             if partner and p['dir'] == "Increasing":
                 ax.plot([p['x'], partner['x']], [p['y'], partner['y']], color=c, linestyle=':', alpha=0.4)
 
-        # --- CUSTOM TITLE LOGIC ---
-        title_text = f"Volume: {key}"
-        if key == "Clean":
-            title_text = "Volume: 500 - Clean"
-        
-        ax.set_title(title_text, fontsize=14, fontweight='bold')
+        ax.set_title(f"Volume: {key}", fontsize=16, fontweight='bold')
         ax.grid(True, linestyle='--', alpha=0.3)
         
-        # APPLY FIXED AXES
         ax.set_xlim(FIXED_XLIM)
         ax.set_ylim(FIXED_YLIM)
         
-        # --- AXIS LABEL CLEANUP ---
-        # Bottom row only gets X label
-        if i >= 2:
-            ax.set_xlabel("Horiz. Shift (px)", fontsize=14)
-        
-        # Left column only gets Y label
-        if i % 2 == 0:
+        if i == 0:
             ax.set_ylabel("Vert. Shift (px)", fontsize=14)
         else:
-            # Hide Y tick labels for right column
             ax.tick_params(labelleft=False)
 
-        # --- INCREASE TICK SIZE ---
         ax.tick_params(axis='both', which='major', labelsize=14)
 
-    # 5. UNIFIED LEGEND
+    fig.supxlabel("Horizontal Shift (px)", fontsize=14, fontweight='bold')
+
+    # 5. LEGEND
     legend_shape = [
         Line2D([0], [0], marker='s', color='w', label='Increasing', markerfacecolor='grey', markersize=10, markeredgecolor='k'),
         Line2D([0], [0], marker='^', color='w', label='Decreasing', markerfacecolor='grey', markersize=10, markeredgecolor='k')
@@ -298,17 +357,16 @@ def process_multi_volume(parent_dir):
         for s in sorted_speeds
     ]
     
-    leg1 = fig.legend(handles=legend_shape, loc='center left', bbox_to_anchor=(1.02, 0.6), title="Phase")
-    fig.legend(handles=legend_color, loc='center left', bbox_to_anchor=(1.02, 0.4), title="Speed")
+    leg1 = fig.legend(handles=legend_shape, loc='center left', bbox_to_anchor=(1.01, 0.6), title="Phase")
+    fig.legend(handles=legend_color, loc='center left', bbox_to_anchor=(1.01, 0.4), title="Speed")
     
-    save_path = os.path.join(output_dir, "Grid_Displacement_Comparison.png")
-    
+    save_path = os.path.join(output_dir, "Grid_1x3_Volume_Comparison.png")
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"\nSuccess! Grid saved to: {save_path}")
     plt.show()
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python ensemble_multi_volume_polished.py <path_to_PARENT_folder>")
+        print("Usage: python ensemble_1x3_circular_roi.py <path_to_PARENT_folder>")
     else:
         process_multi_volume(sys.argv[1])
