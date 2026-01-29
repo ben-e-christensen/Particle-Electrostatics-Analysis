@@ -14,7 +14,7 @@ HARD_CUTOFF_MIN = 60.0  # Full duration
 FIXED_VOLT_YMIN = 0.0
 FIXED_VOLT_YMAX = 0.225
 
-# Color Palette for distinct trials
+# Color Palette for distinct trials (Only used for Voltage now)
 TRIAL_COLORS = [
     'grey',           # Trial 1
     'skyblue',        # Trial 2
@@ -26,7 +26,7 @@ TRIAL_COLORS = [
 # =================================================
 
 def process_separate_graphs(parent_dir):
-    print(f"--- Starting Dual Analysis (Colored by Trial) for: {parent_dir} ---")
+    print(f"--- Starting Analysis (Black Angle / Colored Voltage) for: {parent_dir} ---")
 
     # 1. DISCOVER TRIALS
     trial_folders = []
@@ -45,7 +45,6 @@ def process_separate_graphs(parent_dir):
     if not os.path.exists(output_dir): os.makedirs(output_dir)
 
     # Containers
-    # We now store data as (trial_index, x_values, y_values) tuples
     angle_data_grouped = []
     voltage_data_grouped = []
 
@@ -151,16 +150,14 @@ def process_separate_graphs(parent_dir):
         except Exception as e:
             print(f"Skipping {os.path.basename(trial_path)}: {e}")
 
-    # ================= PLOT 1: ANGLE OF REPOSE =================
+    # ================= PLOT 1: ANGLE OF REPOSE (ALL BLACK) =================
     print("Generating Angle Plot...")
     plt.figure(figsize=(12, 6))
     
     if angle_data_grouped:
-        # Loop through groups to plot distinct colors
         for (trial_idx, x, y) in angle_data_grouped:
-            c = TRIAL_COLORS[trial_idx % len(TRIAL_COLORS)]
-            # Very low alpha for angle cloud because it's dense
-            plt.scatter(x, y, s=0.5, color=c, alpha=0.05, rasterized=True)
+            # FORCE COLOR TO BLACK
+            plt.scatter(x, y, s=0.5, color='black', alpha=0.05, rasterized=True)
             
         # Calc limits based on all data
         all_y = np.concatenate([y for _, _, y in angle_data_grouped])
@@ -184,7 +181,7 @@ def process_separate_graphs(parent_dir):
     plt.close()
     print(f"Saved: {angle_path}")
 
-    # ================= PLOT 2: PEAK VOLTAGE =================
+    # ================= PLOT 2: PEAK VOLTAGE (COLORED BY TRIAL) =================
     print("Generating Voltage Plot...")
     plt.figure(figsize=(12, 6))
 
@@ -218,6 +215,6 @@ def process_separate_graphs(parent_dir):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python ensemble_separate_graphs_colored.py <path_to_PARENT_folder>")
+        print("Usage: python ensemble_separate_graphs.py <path_to_PARENT_folder>")
     else:
         process_separate_graphs(sys.argv[1])
