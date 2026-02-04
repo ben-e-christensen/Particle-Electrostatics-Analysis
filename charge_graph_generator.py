@@ -89,11 +89,12 @@ def plot_charge_graph(ch2_data, start_idx):
     plt.plot(t_vals, ch2_data, color='black', linewidth=1, label="Charge")
 
     # Styling
-    plt.title(f"Charge vs Time", fontsize=14)
-    plt.xlabel("Time (s)")
-    plt.ylabel("Std Dev of Charge")
+    plt.title(f"Charge vs Time")
+    plt.xlabel("Time (s)", fontsize=18)
+    plt.ylabel("Voltage (V)", fontsize=18)
     plt.grid(True)
     plt.legend()
+    plt.tick_params(axis='both', which='major', labelsize=14) 
     plt.tight_layout()
 
     print(f"Saving graph to {OUTPUT_GRAPH_PATH}...")

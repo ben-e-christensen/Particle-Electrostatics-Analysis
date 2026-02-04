@@ -87,11 +87,12 @@ def generate_whole_run_summaries(df, materials, output_dir):
                 plt.plot(s_df["voltage_std"], m*s_df["voltage_std"]+b, color=c, ls="--", alpha=0.4)
                 
         plt.title(f"Whole Run Summary: {material.capitalize()}", pad=20)
-        plt.xlabel("Std Dev Voltage (V)", fontweight='bold')
-        plt.ylabel("Angle of Repose (deg)", fontweight='bold')
+        plt.xlabel("Std Dev Voltage (V)",fontsize=18)
+        plt.ylabel("Angle of Repose (deg)", fontsize=18)
         plt.legend(title="RPM", bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.grid(True, alpha=0.3)
+        plt.grid(True, alpha=0.3)  
         plt.tight_layout()
+        plt.tick_params(axis='both', which='major', labelsize=14) 
         plt.savefig(os.path.join(plot_subdir, f"Summary_{material}.png"))
         plt.close()
 
@@ -145,11 +146,12 @@ def generate_hysteresis_grid(df, materials, output_dir, y_col, y_label, filename
                 plt.errorbar(data.index, data['y_avg'], yerr=data['y_std'], fmt='o-', 
                             color=color, label=direction, capsize=5, lw=2, markersize=8)
         
-        plt.title(f"{material.capitalize()} - {y_label}", fontweight='bold', fontsize=14)
-        plt.xlabel("Motor Speed (RPM)", fontsize=12)
-        plt.ylabel(y_label, fontsize=12)
+        plt.title(f"{material.capitalize()} - {y_label}", fontweight='bold')
+        plt.xlabel("Motor Speed (RPM)", fontsize=18)
+        plt.ylabel(y_label, fontsize=18)
         plt.grid(True, alpha=0.3)
         plt.legend(fontsize=10)
+        plt.tick_params(axis='both', which='major', labelsize=14) 
         plt.tight_layout()
         
         safe_mat_name = material.capitalize().replace(" ", "_")

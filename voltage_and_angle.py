@@ -8,10 +8,25 @@ import os
 OUTPUT_FOLDER_NAME = "Ensemble_Results"
 VOLTAGE_COL = "CH2_volts"
 HARD_CUTOFF_MIN = 60.0  # Full duration
+
+# --- PLOT SETTINGS ---
+# Fixed Y-Axis for Voltage Plot
+FIXED_VOLT_YMIN = 0.0
+FIXED_VOLT_YMAX = 0.225
+
+# Color Palette for distinct trials (Only used for Voltage now)
+TRIAL_COLORS = [
+    'grey',           # Trial 1
+    'skyblue',        # Trial 2
+    'navy',           # Trial 3
+    'mediumpurple',   # Trial 4 (Extra)
+    'indigo',         # Trial 5 (Extra)
+    'black'           # Fallback
+]
 # =================================================
 
 def process_separate_graphs(parent_dir):
-    print(f"--- Starting Dual Analysis (Separate Graphs) for: {parent_dir} ---")
+    print(f"--- Starting Analysis (Black Angle / Colored Voltage) for: {parent_dir} ---")
 
     # 1. DISCOVER TRIALS
     trial_folders = []
@@ -22,14 +37,16 @@ def process_separate_graphs(parent_dir):
     if not trial_folders:
         print("No trial folders found!")
         return
+    
+    # Sort folders to ensure consistent coloring order (T1, T2, T3...)
+    trial_folders.sort()
 
     output_dir = os.path.join(parent_dir, OUTPUT_FOLDER_NAME)
     if not os.path.exists(output_dir): os.makedirs(output_dir)
 
     # Containers
-    angle_data_frames = []
-    all_peaks_time = []
-    all_peaks_val = []
+    angle_data_grouped = []
+    voltage_data_grouped = []
 
     cols = ["index", "timestamp", "seq", "ms", "motor_angle_deg", "motor_speed",
             "CH0_volts", "CH2_volts", "CH3_volts", "ellipse_angle_deg",
@@ -38,8 +55,11 @@ def process_separate_graphs(parent_dir):
 
     print("Processing trials...")
 
-    for trial_path in trial_folders:
+    for i, trial_path in enumerate(trial_folders):
         try:
+            trial_name = os.path.basename(trial_path)
+            print(f"  Reading Trial {i+1}: {trial_name}")
+            
             csv_path = os.path.join(trial_path, "experiment_log.csv")
             df = pd.read_csv(csv_path, names=cols, header=0, on_bad_lines="skip", engine="python")
             
@@ -56,10 +76,10 @@ def process_separate_graphs(parent_dir):
             df = df.sort_values(by="ms")
 
             # --- COLLECTION 1: ANGLE DATA ---
-            # Just grab the raw rows for the angle cloud
             df_angle = df.dropna(subset=["ellipse_angle_deg"])
             if not df_angle.empty:
-                angle_data_frames.append(df_angle[["rel_time_min", "ellipse_angle_deg"]])
+                # Store (trial_idx, x, y)
+                angle_data_grouped.append((i, df_angle["rel_time_min"].values, df_angle["ellipse_angle_deg"].values))
 
             # --- COLLECTION 2: VOLTAGE PEAKS (Interpolated) ---
             df_volt = df.dropna(subset=["motor_speed", VOLTAGE_COL])
@@ -73,6 +93,9 @@ def process_separate_graphs(parent_dir):
 
                 current_idx = 0
                 n_samples = len(times)
+                
+                t_peaks = []
+                v_peaks = []
 
                 while current_idx < n_samples:
                     curr_t = times[current_idx]
@@ -91,6 +114,7 @@ def process_separate_graphs(parent_dir):
                     chunk_volts = volts[current_idx:end_idx]
 
                     # Interpolation Logic
+                    val_to_store = None
                     if len(chunk_volts) >= 3:
                         local_max_idx = np.argmax(chunk_volts)
                         
@@ -107,73 +131,81 @@ def process_separate_graphs(parent_dir):
                                 interpolated_val = y2
                         else:
                             interpolated_val = np.max(chunk_volts)
-
-                        all_peaks_time.append(curr_t)
-                        all_peaks_val.append(interpolated_val)
+                        val_to_store = interpolated_val
 
                     elif len(chunk_volts) > 0:
-                        all_peaks_time.append(curr_t)
-                        all_peaks_val.append(np.max(chunk_volts))
+                        val_to_store = np.max(chunk_volts)
+                    
+                    if val_to_store is not None:
+                        t_peaks.append(curr_t)
+                        v_peaks.append(val_to_store)
 
                     current_idx = end_idx
                     if current_idx >= n_samples: break
+                
+                if t_peaks:
+                    # Store (trial_idx, x, y)
+                    voltage_data_grouped.append((i, np.array(t_peaks), np.array(v_peaks)))
 
         except Exception as e:
             print(f"Skipping {os.path.basename(trial_path)}: {e}")
 
-    # ================= PLOT 1: ANGLE OF REPOSE =================
+    # ================= PLOT 1: ANGLE OF REPOSE (ALL BLACK) =================
     print("Generating Angle Plot...")
     plt.figure(figsize=(12, 6))
     
-    if angle_data_frames:
-        master_angle_df = pd.concat(angle_data_frames)
-        x_angle = master_angle_df["rel_time_min"].values
-        y_angle = master_angle_df["ellipse_angle_deg"].values
-        
-        plt.scatter(x_angle, y_angle, s=0.5, color='black', alpha=0.02, rasterized=True)
-        
-        y_min, y_max = y_angle.min(), y_angle.max()
+    if angle_data_grouped:
+        for (trial_idx, x, y) in angle_data_grouped:
+            # FORCE COLOR TO BLACK
+            plt.scatter(x, y, s=0.5, color='black', alpha=0.05, rasterized=True)
+            
+        # Calc limits based on all data
+        all_y = np.concatenate([y for _, _, y in angle_data_grouped])
+        y_min, y_max = all_y.min(), all_y.max()
         buff = (y_max - y_min) * 0.1 if y_max != y_min else 5
         plt.ylim(y_min - buff, y_max + buff)
         plt.title("Angle Sampled At 100Hz", fontsize=20, fontweight='bold')
     else:
-        plt.text(0.5, 0.5, "No Angle Data", ha='center')
+        plt.text(1, 1, "No Angle Data", ha='center')
         plt.title("Angle Data Missing")
 
-    plt.xlabel("Time (min)", fontsize=14)
-    plt.ylabel("Angle (deg)", fontsize=14)
+    plt.xlabel("Time (min)", fontsize=18)
+    plt.ylabel("Angle (deg)", fontsize=18)
     plt.xlim(0, HARD_CUTOFF_MIN)
     plt.grid(True, alpha=0.3)
+    plt.tick_params(axis='both', which='major', labelsize=14) 
     plt.tight_layout()
     
     angle_path = os.path.join(output_dir, "Global_Angle_Continuous.png")
     plt.savefig(angle_path, dpi=300)
-    plt.close() # Close to start fresh for next plot
+    plt.close()
     print(f"Saved: {angle_path}")
 
-    # ================= PLOT 2: PEAK VOLTAGE =================
+    # ================= PLOT 2: PEAK VOLTAGE (COLORED BY TRIAL) =================
     print("Generating Voltage Plot...")
     plt.figure(figsize=(12, 6))
 
-    if all_peaks_time:
-        x_peaks = np.array(all_peaks_time)
-        y_peaks = np.array(all_peaks_val)
+    if voltage_data_grouped:
+        for (trial_idx, x, y) in voltage_data_grouped:
+            c = TRIAL_COLORS[trial_idx % len(TRIAL_COLORS)]
+            # Higher alpha for peaks so colors are visible
+            plt.scatter(x, y, s=25, color=c, alpha=0.6, label=f'Trial {trial_idx+1}')
         
-        plt.scatter(x_peaks, y_peaks, s=25, color='tab:blue', alpha=0.5, label='Interpolated Peak Voltage')
-        
-        y_min, y_max = y_peaks.min(), y_peaks.max()
-        buff = (y_max - y_min) * 0.1 if y_max != y_min else 0.01
-        plt.ylim(y_min - buff, y_max + buff)
+        # --- FIXED LIMITS AS REQUESTED ---
+        plt.ylim(FIXED_VOLT_YMIN, FIXED_VOLT_YMAX)
         plt.title("Interpolated Peak Charge Every Rotation", fontsize=20, fontweight='bold')
     else:
-        plt.text(0.5, 0.5, "No Voltage Data", ha='center')
+        plt.text(1, 1, "No Voltage Data", ha='center')
         plt.title("Voltage Data Missing")
 
-    plt.xlabel("Time (min)", fontsize=14)
-    plt.ylabel("Peak Voltage (V)", fontsize=14)
+    plt.xlabel("Time (min)", fontsize=18)
+    plt.ylabel("Peak Voltage (V)", fontsize=18)
     plt.xlim(0, HARD_CUTOFF_MIN)
     plt.grid(True, alpha=0.3)
-
+    
+    # Add Legend to identify trials
+    plt.legend(fontsize=10, loc='upper right')
+    plt.tick_params(axis='both', which='major', labelsize=14) 
     plt.tight_layout()
     
     volt_path = os.path.join(output_dir, "Global_Voltage_Interpolated.png")
