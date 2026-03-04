@@ -12,7 +12,7 @@ HARD_CUTOFF_MIN = 60.0  # Full duration
 # --- PLOT SETTINGS ---
 # Fixed Y-Axis for Voltage Plot
 FIXED_VOLT_YMIN = 0.0
-FIXED_VOLT_YMAX = 0.225
+FIXED_VOLT_YMAX = 0.275
 
 # Color Palette for distinct trials (Only used for Voltage now)
 TRIAL_COLORS = [
@@ -61,7 +61,11 @@ def process_separate_graphs(parent_dir):
             print(f"  Reading Trial {i+1}: {trial_name}")
             
             csv_path = os.path.join(trial_path, "experiment_log.csv")
-            df = pd.read_csv(csv_path, names=cols, header=0, on_bad_lines="skip", engine="python")
+            
+            # FIX 1: Removed engine="python", added dtype for memory savings
+            # FIX 3: Assuming log is roughly sorted, we rely on that or use inplace sort later
+            df = pd.read_csv(csv_path, names=cols, header=0, on_bad_lines="skip", 
+                             dtype={"ms": "float32", "CH2_volts": "float32", "ellipse_angle_deg": "float32"})
             
             if df.empty: continue
 
@@ -73,13 +77,21 @@ def process_separate_graphs(parent_dir):
             df = df[df["rel_time_min"] <= HARD_CUTOFF_MIN]
             if df.empty: continue
             
-            df = df.sort_values(by="ms")
+            # FIX 3: Sort in place to save memory
+            df.sort_values(by="ms", inplace=True)
 
             # --- COLLECTION 1: ANGLE DATA ---
             df_angle = df.dropna(subset=["ellipse_angle_deg"])
+            
+            # FIX 2: DOWNSAMPLE if too large to prevent Plotting Crash
+            if len(df_angle) > 100000: 
+                # Keep max 100k points for plotting
+                step = len(df_angle) // 100000
+                df_angle = df_angle.iloc[::step]
+
             if not df_angle.empty:
-                # Store (trial_idx, x, y)
                 angle_data_grouped.append((i, df_angle["rel_time_min"].values, df_angle["ellipse_angle_deg"].values))
+
 
             # --- COLLECTION 2: VOLTAGE PEAKS (Interpolated) ---
             df_volt = df.dropna(subset=["motor_speed", VOLTAGE_COL])

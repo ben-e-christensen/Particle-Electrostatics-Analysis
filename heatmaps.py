@@ -89,7 +89,7 @@ def save_heatmap_grids(heatmap_store, unique_speeds, material_name, subfolder_na
         print(f"    Saved Heatmap Grid: {safe_name}")
 
 def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
-    # 1. FIND CSV
+    # 1. FIND CSV (Restored original search logic)
     csv_path = None
     target_root = None
     for root, dirs, files in os.walk(folder_path):
@@ -97,7 +97,10 @@ def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
             csv_path = os.path.join(root, "experiment_log.csv")
             target_root = root
             break
-    if not csv_path: return None, None
+            
+    if not csv_path: 
+        print(f"  -> Could not find 'experiment_log.csv' inside {folder_path}")
+        return None, None
 
     # 2. LOAD DATA
     cols = ["index", "timestamp", "seq", "ms", "motor_angle_deg", "motor_speed", 
@@ -106,16 +109,52 @@ def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
             "ch2_flag", "ch3_flag"]
     try:
         df = pd.read_csv(csv_path, names=cols, header=0, on_bad_lines="skip", engine="python")
+        
+        # --- NEW TIMESTAMP MATCHING LOGIC ---
+        # If the CSV failed to log the image names, reconstruct them from the actual files!
+        if df["frame_name"].isnull().all():
+            image_dir = os.path.join(target_root, "images")
+            if os.path.exists(image_dir):
+                image_files = [f for f in os.listdir(image_dir) if f.endswith(('.jpg', '.png'))]
+                print(f"  -> CSV missing frame names. Matching {len(image_files)} images by timestamp...")
+                
+                # Extract timestamp from image names (e.g., "1771281983581_frame_002235.jpg")
+                img_data = []
+                for img in image_files:
+                    try:
+                        ts_ms = int(img.split('_')[0])
+                        img_data.append({"actual_frame": img, "timestamp": ts_ms / 1000.0})
+                    except ValueError:
+                        continue # Skip files that don't match the naming convention
+                        
+                if img_data:
+                    img_df = pd.DataFrame(img_data).sort_values("timestamp")
+                    df = df.sort_values("timestamp")
+                    
+                    # Snap each physical image to the closest CSV timestamp (within 0.1 seconds)
+                    df = pd.merge_asof(df, img_df, on="timestamp", direction="nearest", tolerance=0.1)
+                    df["frame_name"] = df["actual_frame"]
+        # ------------------------------------
+        
+        # Now it will only drop rows that truly don't have a matching picture
         df = df.dropna(subset=["frame_name"])
+        
         max_val = df["motor_speed"].max()
         max_indices = df.index[df["motor_speed"] == max_val].tolist()
-        if not max_indices: return None, None
+        
+        if not max_indices: 
+            print("  -> 'max_indices' is empty. Motor speed might be entirely NaN.")
+            return None, None
+            
         mid_idx = max_indices[len(max_indices) // 2]
         
         df["direction"] = "Increasing"
         df.loc[mid_idx + 1:, "direction"] = "Decreasing"
         df["grouped_speed"] = df["motor_speed"].round(SPEED_ROUNDING).astype(int)
-    except: return None, None
+        
+    except Exception as e: 
+        print(f"  -> ERROR reading CSV: {e}")
+        return None, None
 
     # 3. GENERATE HEATMAPS
     unique_speeds = sorted(df["grouped_speed"].unique())
@@ -142,7 +181,7 @@ def get_experiment_data(folder_path, output_dir, material_name, subfolder_key):
                 if img is None: continue
                 img = apply_circular_mask(img) # Apply ROI
                 if accumulator is None: accumulator = np.zeros_like(img, dtype=np.float32)
-                _, mask = cv2.threshold(img, 50, 1, cv2.THRESH_BINARY)
+                _, mask = cv2.threshold(img, 135, 1, cv2.THRESH_BINARY)
                 accumulator += mask
                 count += 1
             
