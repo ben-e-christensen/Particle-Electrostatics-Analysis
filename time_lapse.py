@@ -16,8 +16,11 @@ MIN_SECONDS_PER_BIN = 30
 FIXED_PROMINENCE = 1.5
 HARD_CUTOFF_MIN = 60.0  # Max duration in minutes to plot
 
-# Interpolation Logic (for Voltage)
+# --- SIGNAL PROCESSING (NEW HYBRID TRACKER SETTINGS) ---
 VOLTAGE_COL = "CH2_volts"
+GLOBAL_BASELINE_MINUTES = 5.0 
+SMOOTHING_WINDOW = 7 
+FLIP_CH2 = True  
 
 # Formatting Constants
 FONT_TICK = 14
@@ -42,42 +45,61 @@ def get_material_name(csv_path, time_point_root):
         return candidate.lower()
     return parent_name.lower()
 
-def interpolate_voltage_peaks(times, speeds, volts):
-    t_peaks, v_peaks = [], []
-    current_idx, n_samples = 0, len(times)
-
-    while current_idx < n_samples:
-        curr_t = times[current_idx]
-        curr_speed = speeds[current_idx]
-        effective_speed = 1.0 if curr_speed < 0.5 else curr_speed
+def extract_tracked_peaks(times, volts, speeds, global_zero):
+    """
+    Hybrid Phase-Locked Tracker: 
+    1. Uses local median to FIND the peak (ignoring global float and RC bounds).
+    2. Uses global_zero to MEASURE the peak (preserving accumulated charge).
+    """
+    n_samples = len(times)
+    if n_samples < 2: return [], []
         
-        window_end_t = curr_t + (1.0 / effective_speed)
-        end_idx = current_idx
-        while end_idx < n_samples and times[end_idx] < window_end_t:
-            end_idx += 1
-        
-        chunk = volts[current_idx:end_idx]
-        val = None
-        
-        if len(chunk) >= 3:
-            idx = np.argmax(chunk)
-            if 0 < idx < len(chunk) - 1:
-                y1, y2, y3 = chunk[idx-1], chunk[idx], chunk[idx+1]
-                denom = 2 * (y1 - 2*y2 + y3)
-                if denom != 0:
-                    delta = (y1 - y3) / denom
-                    val = y2 - (0.25 * (y1 - y3) * delta)
-                else: val = y2
-            else: val = np.max(chunk)
-        elif len(chunk) > 0: val = np.max(chunk)
-        
-        if val:
-            t_peaks.append(curr_t)
-            v_peaks.append(val)
-        
-        current_idx = end_idx
+    peak_indices = []
     
-    return np.array(t_peaks), np.array(v_peaks)
+    # 1. FIND INITIAL PEAK (Using local median)
+    first_eff_speed = speeds[0] if speeds[0] > 0.5 else 1.0
+    first_rot_time = 1.0 / first_eff_speed
+    end_idx = np.searchsorted(times, times[0] + (first_rot_time * 1.5))
+    
+    window_v = volts[0:max(10, end_idx)]
+    local_base = np.median(window_v)
+    peak_indices.append(np.argmax(np.abs(window_v - local_base)))
+    
+    # 2. TRACK SUBSEQUENT PEAKS
+    curr_p = peak_indices[0]
+    while True:
+        curr_t = times[curr_p]
+        eff_speed = speeds[curr_p] if speeds[curr_p] > 0.5 else 1.0
+        rot_time = 1.0 / eff_speed
+        
+        # Phase-locked search window
+        search_start_t = curr_t + (rot_time * 0.5)
+        search_end_t = curr_t + (rot_time * 1.5)
+        
+        s_idx = np.searchsorted(times, search_start_t)
+        e_idx = np.searchsorted(times, search_end_t)
+        
+        if s_idx >= n_samples: break
+        if s_idx == e_idx:
+            curr_p = min(s_idx + 1, n_samples - 1)
+            continue
+            
+        # FIND relative to LOCAL median
+        window_v = volts[s_idx:e_idx]
+        local_base = np.median(window_v)
+        local_max_offset = np.argmax(np.abs(window_v - local_base))
+        
+        next_p = s_idx + local_max_offset
+        peak_indices.append(next_p)
+        curr_p = next_p
+
+    # 3. CALCULATE MEASUREMENTS (Relative to GLOBAL zero)
+    t_peaks, v_adj_peaks = [], []
+    for p_idx in peak_indices:
+        t_peaks.append(times[p_idx])
+        v_adj_peaks.append(volts[p_idx] - global_zero)
+        
+    return np.array(t_peaks), np.array(v_adj_peaks)
 
 def load_data(root_path):
     print(f"--- SCANNING ROOT: {root_path} ---")
@@ -161,14 +183,29 @@ def load_data(root_path):
                 if not raw_angle.empty:
                     angle_pts = (raw_angle["rel_time_min"].values, raw_angle["ellipse_angle_deg"].values)
 
+                # Peak Tracking (Flip, Smooth, Global Zero)
                 volt_pts = None
-                df_v = df.dropna(subset=["motor_speed", VOLTAGE_COL])
-                df_v[VOLTAGE_COL] = pd.to_numeric(df_v[VOLTAGE_COL], errors='coerce')
+                df_v = df.dropna(subset=["motor_speed", VOLTAGE_COL]).copy()
+                
+                multiplier = -1.0 if FLIP_CH2 else 1.0
+                df_v[VOLTAGE_COL] = pd.to_numeric(df_v[VOLTAGE_COL], errors='coerce') * multiplier
                 df_v = df_v.dropna(subset=[VOLTAGE_COL])
+                
                 if not df_v.empty:
-                    t_peaks, v_peaks = interpolate_voltage_peaks(
-                        df_v["rel_time_min"].values, df_v["motor_speed"].values, df_v[VOLTAGE_COL].values
-                    )
+                    if SMOOTHING_WINDOW > 1:
+                        df_v[VOLTAGE_COL] = df_v[VOLTAGE_COL].rolling(window=SMOOTHING_WINDOW, center=True).mean()
+                        df_v = df_v.dropna(subset=[VOLTAGE_COL])
+                    
+                    times_full = df_v["rel_time_min"].values
+                    speeds_full = df_v["motor_speed"].values
+                    volts_full = df_v[VOLTAGE_COL].values
+                    
+                    # Calculate Global Zero
+                    mask = times_full <= GLOBAL_BASELINE_MINUTES
+                    global_zero = np.median(volts_full[mask]) if mask.any() else np.median(volts_full)
+
+                    t_peaks, v_peaks = extract_tracked_peaks(times_full, volts_full, speeds_full, global_zero)
+                    
                     if len(t_peaks) > 0:
                         volt_pts = (t_peaks, v_peaks)
 
@@ -365,7 +402,8 @@ def plot_1x3_timeseries(raw_list, output_dir):
 
         # === PLOT 2: VOLTAGE ===
         fig, axs = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True, sharey=True, sharex=True)
-        fig.suptitle(f"{mat.title()} - Interpolated Voltage Time Series", fontsize=FONT_TITLE, fontweight='bold')
+        # Updated Title to reflect Global Zero tracking
+        fig.suptitle(f"{mat.title()} - Peak Charge Time Series (Flipped & Adjusted)", fontsize=FONT_TITLE, fontweight='bold')
         
         for i, tp in enumerate(TIME_POINTS):
             ax = axs[i]
@@ -386,7 +424,8 @@ def plot_1x3_timeseries(raw_list, output_dir):
             ax.tick_params(labelsize=FONT_TICK)
             
             if i == 1: ax.set_xlabel("Time (min)", fontsize=FONT_LABEL)
-            if i == 0: ax.set_ylabel("Voltage (V)", fontsize=FONT_LABEL)
+            # Updated Y-label
+            if i == 0: ax.set_ylabel("Adjusted Voltage (V)", fontsize=FONT_LABEL)
             
         # FORCE LEGEND ON LAST PLOT (Or Outside)
         # We manually construct the legend based on the max trials we found
