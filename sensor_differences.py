@@ -2,22 +2,20 @@ import os
 import pandas as pd
 
 # Updated parent directory
-parent_dir = "D:/particle-data/sensor-readings" 
+parent_dir = "/media/ben/SANDISK/particle-data/sensor-readings" 
 
 folders = [
-    "Just-acrylic-again",
-    "acetal-and-acrylic",
-    "nylon-and-acrylic",
-    "teflon-and-acrylic"
+    "Just-Acrylic",
+    "Acrylic-and-Acetal",
+    "Acrylic-and-Nylon",
+    "Acrylic-and-Teflon"
 ]
 
-# Map your raw folder names to the clean display names for the LaTeX table
-# Map your raw folder names to the clean display names for the LaTeX table
 name_map = {
-    "Just-acrylic-again": "Acrylic",
-    "acetal-and-acrylic": "Acetal and Acrylic",
-    "nylon-and-acrylic": "Nylon and Acrylic",
-    "teflon-and-acrylic": "Teflon and Acrylic"
+    "Just-Acrylic": "Acrylic",
+    "Acrylic-and-Acetal": "Acetal and Acrylic",
+    "Acrylic-and-Nylon": "Nylon and Acrylic",
+    "Acrylic-and-Teflon": "Teflon and Acrylic"
 }
 
 results = []
@@ -55,7 +53,7 @@ for folder in folders:
 results_df = pd.DataFrame(results)
 
 # Calculate Attenuation (Percentage Difference from Baseline)
-baseline_row = results_df[results_df['Material'] == 'Just-acrylic-again'] # <-- Updated this line!
+baseline_row = results_df[results_df['Material'] == 'Just-Acrylic'] # <-- Updated this line!
 
 if not baseline_row.empty:
     baseline_val = baseline_row['Avg P2P (V)'].values[0]
