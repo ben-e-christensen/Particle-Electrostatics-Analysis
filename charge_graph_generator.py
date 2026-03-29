@@ -1,14 +1,20 @@
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import rcParams
 import random
 import os
 
 # ================= CONFIGURATION =================
 # File Paths
-CSV_FILE_PATH = "D:/particle-data/Clean/Teflon/500/Teflon-Clean-500-60mins-T3/experiment_log.csv"
+CSV_FILE_PATH = "D:/particle-data/Dirty/Acrylic/1000/Acrylic-Dirty-1000-60mins-T3/experiment_log.csv"
 
 # Output Filenames
 OUTPUT_GRAPH_PATH = "charge_graph_snapshot.png"
+
+# --- TOGGLES ---
+SHOW_LEGEND = False  
+SHOW_TITLES = False  
 
 # Analysis Settings
 SAMPLE_RATE_HZ = 100
@@ -18,7 +24,23 @@ WINDOW_SECONDS = 15
 # Number of data points to average together. 1 = No smoothing.
 SMOOTHING_WINDOW = 1
 FLIP_CH2 = True  # Set to True to flip downward spikes up
+
+# --- ACADEMIC PLOT SETTINGS ---
+rcParams['font.sans-serif'] = "Arial"
+rcParams['font.family'] = "sans-serif"
+FONT_TICK = 18
+FONT_LABEL = 18
+FONT_TITLE = 20
 # =================================================
+
+def apply_academic_axes(ax, xlabel="", ylabel=""):
+    """Applies the specific formatting to the axes."""
+    ax.xaxis.set_tick_params(labelsize=FONT_TICK)
+    ax.yaxis.set_tick_params(labelsize=FONT_TICK)
+    ax.tick_params('both', length=7, width=1, which='major')
+    if xlabel: ax.set_xlabel(xlabel, fontsize=FONT_LABEL)
+    if ylabel: ax.set_ylabel(ylabel, fontsize=FONT_LABEL)
+    ax.grid(True, alpha=0.3)
 
 # ---------------------------------------------------------
 # 1. Load and Smooth Data
@@ -81,26 +103,32 @@ def plot_charge_graph(ch2_data):
     # Create Time-axis starting at 0
     t_vals = [i / SAMPLE_RATE_HZ for i in range(len(ch2_data))]
 
-    plt.figure(figsize=(12, 6))
-    plt.plot(t_vals, ch2_data, color='black', linewidth=1.5, label="Smoothed Charge")
+    # Standardized Academic Figure Size
+    fig, ax = plt.subplots(figsize=(7, 5), constrained_layout=True)
+    
+    # Plotting the data
+    ax.plot(t_vals, ch2_data, color='black', linewidth=1.5, label="Smoothed Charge")
+
+    # Title Toggle
+    if SHOW_TITLES:
+        title_text = f"{WINDOW_SECONDS}-Second Charge Snapshot"
+        if SMOOTHING_WINDOW > 1:
+            title_text += f" (Smoothed: {SMOOTHING_WINDOW} pts)"
+        ax.set_title(title_text, fontsize=FONT_TITLE, fontweight='bold')
 
     # Force the X-axis to start exactly at 0 and end at the max time
-    plt.xlim(0, max(t_vals)) 
+    ax.set_xlim(0, max(t_vals)) 
 
-    # Styling
-    plt.xlabel("Time (s)", fontsize=18)
-    plt.ylabel("Voltage (V)", fontsize=18)
+    # Apply standard Academic formatting
+    apply_academic_axes(ax, "Time (s)", "Voltage (V)")
     
-    title_text = f"{WINDOW_SECONDS}-Second Charge Snapshot"
-    if SMOOTHING_WINDOW > 1:
-        title_text += f" (Smoothed: {SMOOTHING_WINDOW} pts)"
-    
-    plt.grid(True, alpha=0.3)
-    plt.tick_params(axis='both', which='major', labelsize=14) 
-    plt.tight_layout()
+    # Legend Toggle
+    if SHOW_LEGEND:
+        ax.legend(fontsize=12, loc='best')
 
     print(f"Saving graph to {OUTPUT_GRAPH_PATH}...")
-    plt.savefig(OUTPUT_GRAPH_PATH, dpi=300, bbox_inches='tight')
+    plt.savefig(OUTPUT_GRAPH_PATH, dpi=300)
+    plt.close()
 
 # ================= MAIN =================
 if __name__ == "__main__":
@@ -108,5 +136,4 @@ if __name__ == "__main__":
 
     if ch2_slice is not None:
         plot_charge_graph(ch2_slice)
-        print("\nDone. Showing generated plot...")
-        plt.show()
+        print("\nDone. Check the output directory for the snapshot.")
