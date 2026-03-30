@@ -11,33 +11,29 @@ VOLTAGE_COL_CH2 = "CH2_volts"
 VOLTAGE_COL_CH3 = "CH3_volts"
 
 # --- TOGGLES ---
-SHOW_LEGEND = False  # Set to True to show legends, False to hide them
-SHOW_TITLES = False  # Set to True to show plot titles, False to hide them
+SHOW_LEGEND = False  
+SHOW_TITLES = False  
 
 # --- ACADEMIC PLOT SETTINGS ---
-# Global Font Setup
 rcParams['font.sans-serif'] = "Arial"
 rcParams['font.family'] = "sans-serif"
 FONT_TITLE = 20
 
 # Fixed Y-Axis for Voltage Plots
-FIXED_VOLT_YMIN = -0.4
+# You can tighten these limits now that the outliers are purged!
+FIXED_VOLT_YMIN = -0.2
 FIXED_VOLT_YMAX = 0.1
 
 # Color Palette for distinct DAYS (Face Color, Edge Color)
 DAY_COLORS = [
-    ('#c5a3d4', '#9944ff'), # Day 1: Purple
-    ('#81aad4', '#083b70'), # Day 2: Blue
-    ('#a3d4a3', '#087008'), # Day 3: Green
-    ('#d4a3a3', '#700808'), # Day 4: Red
-    ('#d4c5a3', '#705c08'), # Day 5: Gold
-    ('#a3d4d4', '#087070'), # Day 6: Cyan
-    ('#d4a3c5', '#70085c')  # Day 7: Pink
+    ('#c5a3d4', '#9944ff'), ('#81aad4', '#083b70'), ('#a3d4a3', '#087008'),
+    ('#d4a3a3', '#700808'), ('#d4c5a3', '#705c08'), ('#a3d4d4', '#087070'),
+    ('#d4a3c5', '#70085c')
 ]
 # =================================================
 
 def get_peak(chunk):
-    """Finds the absolute max peak relative to the local baseline, NO interpolation."""
+    """Finds the absolute max peak relative to the local baseline, returning RELATIVE amplitude."""
     if len(chunk) < 1:
         return None
 
@@ -45,10 +41,9 @@ def get_peak(chunk):
     centered_chunk = chunk - baseline
     local_max_idx = np.argmax(np.abs(centered_chunk))
     
-    return chunk[local_max_idx]
+    return centered_chunk[local_max_idx]
 
 def apply_academic_axes(ax, xlabel, ylabel):
-    """Applies the specific formatting from the coffee script to the axes."""
     ax.xaxis.set_tick_params(labelsize=18)
     ax.yaxis.set_tick_params(labelsize=18)
     ax.tick_params('both', length=7, width=1, which='major')
@@ -123,6 +118,39 @@ def process_continuous_graphs(parent_dir):
                 df_volt = df_volt.dropna(subset=[VOLTAGE_COL_CH2, VOLTAGE_COL_CH3])
 
                 if not df_volt.empty:
+                    # =========================================================
+                    # THE BLACKOUT FILTER: Surgically removing chassis arc events
+                    # =========================================================
+                    # 1. Fast 10-second rolling median to catch the exact moment the floor drops
+                    fast_baseline = df_volt[VOLTAGE_COL_CH2].rolling(window=1000, min_periods=1, center=True).median()
+                    
+                    # 2. Flag moments where the baseline drops past 0.04V
+                    bad_times = df_volt[fast_baseline.abs() > 0.04]["rel_time_hours"].values
+                    
+                    valid_mask = np.ones(len(df_volt), dtype=bool)
+                    times = df_volt["rel_time_hours"].values
+                    
+                    # 3. Define the Blackout Window
+                    blackout_before_hr = 10.0 / 3600.0  # 10 seconds before
+                    blackout_after_hr = 180.0 / 3600.0  # 3 minutes after
+                    
+                    last_trigger_hr = -999
+                    blackout_count = 0
+                    
+                    # 4. Apply the mask
+                    for t in bad_times:
+                        if (t - last_trigger_hr) > (300.0 / 3600.0): # 5 min cooldown to group one continuous event
+                            bad_idx = (times >= (t - blackout_before_hr)) & (times <= (t + blackout_after_hr))
+                            valid_mask[bad_idx] = False
+                            last_trigger_hr = t
+                            blackout_count += 1
+                            
+                    df_volt = df_volt[valid_mask]
+                    if blackout_count > 0:
+                        print(f"    -> [!] Surgically purged {blackout_count} chassis arc events (-10s to +180s buffer)")
+                    # =========================================================
+
+                    # Now proceed with normal peak extraction on the clean data
                     times = df_volt["rel_time_hours"].values
                     speeds = df_volt["motor_speed"].values
                     volts_ch2 = df_volt[VOLTAGE_COL_CH2].values
@@ -169,7 +197,7 @@ def process_continuous_graphs(parent_dir):
             except Exception as e:
                 print(f"Skipping {csv_file}: {e}")
 
-    x_limit = max_time_hours * 1.05 if max_time_hours > 0 else 120.0
+    x_limit = max_time_hours if max_time_hours > 0 else 120.0
 
     # ================= PLOT 1: ANGLE OF REPOSE =================
     print("Generating Continuous Angle Plot...")
@@ -218,11 +246,11 @@ def process_continuous_graphs(parent_dir):
     if SHOW_TITLES:
         ax.set_title("CH2: Continuous Peak Charge (Flipped)", fontsize=FONT_TITLE, fontweight='bold')
 
-    apply_academic_axes(ax, "Cumulative Time (Hours)", "Voltage (V)")
+    apply_academic_axes(ax, "Time (Hours)", "Voltage (V)")
     ax.set_xlim(0, x_limit)
     
     if SHOW_LEGEND:
-        ax.legend(fontsize=12, loc='upper right', framealpha=0.9)
+        ax.legend(fontsize=12, loc='lower left', framealpha=0.9)
         
     plt.tight_layout()
     
@@ -251,7 +279,7 @@ def process_continuous_graphs(parent_dir):
     if SHOW_TITLES:
         ax.set_title("CH3: Continuous Peak Charge", fontsize=FONT_TITLE, fontweight='bold')
 
-    apply_academic_axes(ax, "Cumulative Time (Hours)", "Voltage (V)")
+    apply_academic_axes(ax, "Time (Hours)", "Voltage (V)")
     ax.set_xlim(0, x_limit)
     
     if SHOW_LEGEND:
@@ -260,7 +288,7 @@ def process_continuous_graphs(parent_dir):
     plt.tight_layout()
     
     ch3_path = os.path.join(output_dir, "Global_Voltage_CH3.png")
-    plt.savefig(ch3_path, dpi=300)
+    plt.savefig(ch3_path, dpi=300,bbox_inches='tight')
     plt.close()
     
     print(f"Analysis complete. Check the '{OUTPUT_FOLDER_NAME}' directory.")
