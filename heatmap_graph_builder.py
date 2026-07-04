@@ -7,18 +7,27 @@ from matplotlib import rcParams
 # ================= THE "KNOBS" =================
 VOL_KEYS = ["500", "750", "1000"] 
 
+# --- LAYOUT TOGGLE ---
+# Options: "split" (original 2 blocks of 3) OR "2x6" (one long block of 6)
+LAYOUT_MODE = "2x6" 
+
 # --- SPACING CONTROLS ---
-FIG_W = 12.0
+FIG_W_SPLIT = 12.0  # Figure width for the split layout
+FIG_W_2X6 = 30.0    # Figure width for the 2x6 layout
+
 COL_GAP = 0.05    # Gap between RPM columns
 ROW_GAP = 0.05    # Gap between Accel/Decel
-SPACER_VAL = 0.1  # Gap between the Top block and Bottom block
-
+SPACER_VAL = 0.1  # Gap between the Top block and Bottom block (only used in "split" mode)
 
 GRID_LEFT = 0.08
 GRID_RIGHT = 0.82 
 GRID_TOP = 0.92
 GRID_BOT = 0.05
+
+# Colorbar positioning and width depending on layout
 CBAR_X = 0.86
+CBAR_W_SPLIT = 0.03  # 3% of the 12-inch width
+CBAR_W_2X6 = 0.01    # 1% of the 30-inch width (keeps absolute thickness ~the same)
 
 # --- FONTS & TOGGLES ---
 SHOW_TITLES = False
@@ -34,11 +43,9 @@ SPEEDS = [1, 6, 11, 16, 21, 26]
 
 def assemble(parent_dir):
     # --- DYNAMIC PATH RESOLUTION ---
-    # Strip trailing slashes and grab the folder name as the material
     normalized_path = parent_dir.replace('\\', '/').rstrip('/')
     material = os.path.basename(normalized_path)
     
-    # Auto-generate the correct target directories
     cache_dir = os.path.join(normalized_path, "heatmap_cache")
     output_dir = os.path.join(normalized_path, "heatmaps")
     
@@ -47,9 +54,7 @@ def assemble(parent_dir):
         print("Please run extract_heatmaps.py on this folder first!")
         return
         
-    # Ensure the output folder exists before we try to save to it
     os.makedirs(output_dir, exist_ok=True)
-    
     print(f"=== Building Heatmap Reports for: {material} ===")
 
     # --- 1. SNEAK PEEK AT THE DATA ---
@@ -63,48 +68,66 @@ def assemble(parent_dir):
     img_aspect_ratio = img_h / img_w 
     
     # --- 2. EXACT ASPECT RATIO MATH ---
+    current_fig_w = FIG_W_2X6 if LAYOUT_MODE == "2x6" else FIG_W_SPLIT
+    current_cbar_w = CBAR_W_2X6 if LAYOUT_MODE == "2x6" else CBAR_W_SPLIT
+    
     w_span = GRID_RIGHT - GRID_LEFT
     h_span = GRID_TOP - GRID_BOT
+    plot_width = current_fig_w * w_span 
     
-    plot_width = FIG_W * w_span 
-    W_cell = plot_width / (3 + 2 * COL_GAP)
-    H_cell = W_cell * img_aspect_ratio
-    
-    block_height = H_cell * (2 + ROW_GAP)
-    plot_height = block_height * (2 + SPACER_VAL)
-    dynamic_fig_h = plot_height / h_span
+    if LAYOUT_MODE == "2x6":
+        W_cell = plot_width / (6 + 5 * COL_GAP)
+        H_cell = W_cell * img_aspect_ratio
+        plot_height = H_cell * (2 + ROW_GAP)
+        dynamic_fig_h = plot_height / h_span
+    else: 
+        W_cell = plot_width / (3 + 2 * COL_GAP)
+        H_cell = W_cell * img_aspect_ratio
+        block_height = H_cell * (2 + ROW_GAP)
+        plot_height = block_height * (2 + SPACER_VAL)
+        dynamic_fig_h = plot_height / h_span
     # ---------------------------------
 
     for vol_key in VOL_KEYS:
         print(f"  -> Assembling Volume {vol_key}...")
         
-        fig = plt.figure(figsize=(FIG_W, dynamic_fig_h))
+        fig = plt.figure(figsize=(current_fig_w, dynamic_fig_h))
         
         if SHOW_TITLES:
             fig.suptitle(f"{material.capitalize()} {vol_key} Consolidated Heatmap", fontsize=FONT_TITLE, fontweight='bold', y=0.96)
 
         fig.subplots_adjust(left=GRID_LEFT, right=GRID_RIGHT, top=GRID_TOP, bottom=GRID_BOT)
         
-        # --- NESTED GRIDSPEC SETUP ---
-        gs_outer = fig.add_gridspec(2, 1, hspace=SPACER_VAL)
-        gs_top = gs_outer[0].subgridspec(2, 3, wspace=COL_GAP, hspace=ROW_GAP)
-        gs_bot = gs_outer[1].subgridspec(2, 3, wspace=COL_GAP, hspace=ROW_GAP)
-        gs_blocks = [gs_top, gs_bot]
+        # --- GRIDSPEC SETUP ---
+        if LAYOUT_MODE == "2x6":
+            gs = fig.add_gridspec(2, 6, wspace=COL_GAP, hspace=ROW_GAP)
+        else:
+            gs_outer = fig.add_gridspec(2, 1, hspace=SPACER_VAL)
+            gs_top = gs_outer[0].subgridspec(2, 3, wspace=COL_GAP, hspace=ROW_GAP)
+            gs_bot = gs_outer[1].subgridspec(2, 3, wspace=COL_GAP, hspace=ROW_GAP)
+            gs_blocks = [gs_top, gs_bot]
         
         shared_im = None
         directions = ["Increasing", "Decreasing"]
-        y_labels = ["ACCELERATING", "DECELERATING"] # Arrows removed
+        y_labels = ["ACCELERATING", "DECELERATING"]
         
         for i, speed in enumerate(SPEEDS):
-            col = i % 3
-            block_idx = 0 if i < 3 else 1
-            gs_current = gs_blocks[block_idx]
+            if LAYOUT_MODE == "2x6":
+                col = i
+            else:
+                col = i % 3
+                block_idx = 0 if i < 3 else 1
+                gs_current = gs_blocks[block_idx]
             
             for phase_idx in range(2):
                 d_name = directions[phase_idx]
-                ax = fig.add_subplot(gs_current[phase_idx, col])
                 
-                # LOAD DATA INSTANTLY
+                if LAYOUT_MODE == "2x6":
+                    ax = fig.add_subplot(gs[phase_idx, col])
+                else:
+                    ax = fig.add_subplot(gs_current[phase_idx, col])
+                
+                # LOAD DATA
                 path = os.path.join(cache_dir, f"{vol_key}_{speed}_{d_name}.npy")
                 if os.path.exists(path):
                     data = np.load(path)
@@ -124,9 +147,9 @@ def assemble(parent_dir):
                 if col == 0:
                     ax.set_ylabel(y_labels[phase_idx], fontsize=FONT_LABEL, fontweight='bold', labelpad=10)
 
-        # Add Colorbar safely in the reserved space
         if shared_im:
-            cbar_ax = fig.add_axes([CBAR_X, 0.25, 0.03, 0.5])
+            # Uses the dynamic width value here!
+            cbar_ax = fig.add_axes([CBAR_X, 0.25, current_cbar_w, 0.5])
             cbar = fig.colorbar(shared_im, cax=cbar_ax)
             cbar.set_label("Frequency (%)", fontsize=FONT_LABEL)
             cbar.ax.tick_params(labelsize=FONT_TICK)
