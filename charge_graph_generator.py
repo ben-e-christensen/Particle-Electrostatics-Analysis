@@ -7,7 +7,7 @@ import os
 
 # ================= CONFIGURATION =================
 # File Paths
-CSV_FILE_PATH = "D:/particle-data/time_lapse/Clean-Undisturbed/day6/experiment_log.csv"
+CSV_FILE_PATH = "E:/particle-data/time_lapse/Clean-Undisturbed/day6/experiment_log.csv"
 
 # Output Filenames
 OUTPUT_GRAPH_PATH = "charge_graph_snapshot.png"
@@ -18,7 +18,7 @@ SHOW_TITLES = False
 
 # Analysis Settings
 SAMPLE_RATE_HZ = 100
-WINDOW_SECONDS = 10
+WINDOW_SECONDS = 3
 
 # --- SIGNAL PROCESSING ---
 # Number of data points to average together. 1 = No smoothing.
